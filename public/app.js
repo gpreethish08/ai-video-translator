@@ -283,6 +283,70 @@ document.addEventListener("DOMContentLoaded", () => {
         return match ? match[1] : null;
     }
 
+    function audioBufferToWav(buffer, sampleRate = 16000) {
+        const numChannels = 1;
+        const channelData = buffer.getChannelData(0);
+        const numFrames = channelData.length;
+        const bytesPerSample = 2;
+        const blockAlign = numChannels * bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataByteCount = numFrames * blockAlign;
+        const arrayBuffer = new ArrayBuffer(44 + dataByteCount);
+        const view = new DataView(arrayBuffer);
+
+        function writeString(offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + dataByteCount, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, byteRate, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, 16, true);
+        writeString(36, 'data');
+        view.setUint32(40, dataByteCount, true);
+
+        let offset = 44;
+        for (let i = 0; i < numFrames; i++) {
+            let s = Math.max(-1, Math.min(1, channelData[i]));
+            let val = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            view.setInt16(offset, val, true);
+            offset += 2;
+        }
+
+        return new Blob([view], { type: 'audio/wav' });
+    }
+
+    async function extractVoiceSample(file) {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) return null;
+            const ctx = new AudioCtx();
+            const slice = file.slice(0, 12 * 1024 * 1024);
+            const arrayBuf = await slice.arrayBuffer();
+            const decoded = await ctx.decodeAudioData(arrayBuf);
+            const duration = Math.min(decoded.duration, 25.0);
+            const offlineCtx = new OfflineAudioContext(1, Math.floor(duration * 16000), 16000);
+            const src = offlineCtx.createBufferSource();
+            src.buffer = decoded;
+            src.connect(offlineCtx.destination);
+            src.start(0);
+            const rendered = await offlineCtx.startRendering();
+            return audioBufferToWav(rendered, 16000);
+        } catch (e) {
+            console.log("WebAudio extraction notice:", e);
+            return null;
+        }
+    }
+
     // -------------------------------------------------------------
     // 4. Fetch Supported Languages Catalog
     // -------------------------------------------------------------
@@ -337,15 +401,12 @@ document.addEventListener("DOMContentLoaded", () => {
         readyPill.classList.add("hidden");
         logCard.classList.add("hidden");
         videoPlaceholder.classList.remove("hidden");
-        if (audioControlsBar) audioControlsBar.classList.add("hidden");
-        if (liveSubtitlesOverlay) liveSubtitlesOverlay.classList.add("hidden");
-
-        outputVideoPlayer.pause();
-        outputVideoPlayer.src = "";
-        if (youtubeEmbedPlayer) {
-            youtubeEmbedPlayer.classList.add("hidden");
-            youtubeEmbedPlayer.src = "";
+        if (translatedAudioElement) {
+            translatedAudioElement.pause();
+            translatedAudioElement.currentTime = 0;
+            translatedAudioElement.src = "";
         }
+        currentCompletedJob = null;
         if (window.speechSynthesis) window.speechSynthesis.cancel();
 
         try {
@@ -353,11 +414,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (isUploadTab) {
                 window._uploadedVideoFile = currentFile;
                 const formData = new FormData();
-                const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-
-                if (isLocalhost || currentFile.size <= 4 * 1024 * 1024) {
-                    formData.append("video", currentFile);
-                }
+                formData.append("video", currentFile);
                 formData.append("filename", currentFile.name);
                 formData.append("file_size", currentFile.size);
                 formData.append("target_lang", targetLang);
@@ -368,6 +425,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (customScript) {
                     formData.append("custom_script", customScript);
                 }
+
+                // Extract audio voice sample for speech-to-text
+                try {
+                    const sampleWav = await extractVoiceSample(currentFile);
+                    if (sampleWav) {
+                        formData.append("audio_sample", sampleWav, "sample.wav");
+                    }
+                } catch (_) {}
 
                 res = await fetch("/api/translate/file", {
                     method: "POST",
@@ -506,43 +571,48 @@ document.addEventListener("DOMContentLoaded", () => {
             translatedTrackLabel.textContent = `🔊 Translated Neural Audio (${targetLangCode})`;
         }
 
-        // Set up authentic neural translated audio element
-        const audioStreamUrl = `/api/audio/${job.job_id}`;
+        // Set up authentic neural translated audio element with cache buster
+        const timestamp = Date.now();
+        const audioStreamUrl = `/api/audio/${job.job_id}?t=${timestamp}`;
         if (translatedAudioElement) {
+            translatedAudioElement.pause();
+            translatedAudioElement.currentTime = 0;
             translatedAudioElement.src = audioStreamUrl;
             translatedAudioElement.load();
         }
 
         // Configure 3 Download Action Buttons
         if (downloadAudioBtn) {
-            downloadAudioBtn.href = `/api/download/audio/${job.job_id}`;
+            downloadAudioBtn.href = `/api/download/audio/${job.job_id}?t=${timestamp}`;
             downloadAudioBtn.setAttribute("download", `translated_audio_${targetLang}_${job.job_id.substring(0, 8)}.mp3`);
         }
 
         if (downloadSubtitlesBtn) {
-            downloadSubtitlesBtn.href = `/api/subtitles/${job.job_id}`;
+            downloadSubtitlesBtn.href = `/api/subtitles/${job.job_id}?t=${timestamp}`;
             downloadSubtitlesBtn.setAttribute("download", `translated_subtitles_${targetLang}_${job.job_id.substring(0, 8)}.srt`);
         }
 
         if (downloadBtn) {
-            downloadBtn.href = `/api/download/${job.job_id}`;
-            downloadBtn.setAttribute("download", `translated_${targetLang}_${job.job_id.substring(0, 8)}.mp3`);
+            downloadBtn.href = `/api/download/${job.job_id}?t=${timestamp}`;
+            downloadBtn.setAttribute("download", `translated_${targetLang}_${job.job_id.substring(0, 8)}.mp4`);
         }
 
         const ytId = job.youtube_id || window._currentYouTubeId;
 
         if (ytId && youtubeEmbedPlayer) {
+            // Priority 1: YouTube video - play in responsive iframe (muted) with translated neural audio
             outputVideoPlayer.classList.add("hidden");
             outputVideoPlayer.pause();
+            outputVideoPlayer.src = "";
             youtubeEmbedPlayer.classList.remove("hidden");
-            // Mute YouTube native audio so ONLY the translated neural voice track is heard
             youtubeEmbedPlayer.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&mute=1&rel=0`;
 
             if (translatedAudioElement) {
                 translatedAudioElement.currentTime = 0;
-                translatedAudioElement.play().catch(() => {});
+                translatedAudioElement.play().catch(e => console.log("Audio play prevented:", e));
             }
         } else if (window._uploadedVideoFile) {
+            // Priority 2: Uploaded video file - play in HTML5 video player with translated audio
             if (youtubeEmbedPlayer) {
                 youtubeEmbedPlayer.classList.add("hidden");
                 youtubeEmbedPlayer.src = "";
@@ -551,27 +621,22 @@ document.addEventListener("DOMContentLoaded", () => {
             const localBlobUrl = URL.createObjectURL(window._uploadedVideoFile);
             outputVideoPlayer.src = localBlobUrl;
             outputVideoPlayer.load();
-
-            // Set up audio track volume ducking for translated speech
             applyAudioTrackMode();
+            outputVideoPlayer.play().catch(e => console.log("Video play prevented:", e));
         } else {
+            // Priority 3: Server-streamed output
             if (youtubeEmbedPlayer) {
                 youtubeEmbedPlayer.classList.add("hidden");
                 youtubeEmbedPlayer.src = "";
             }
             outputVideoPlayer.classList.remove("hidden");
-            const streamUrl = `/api/stream/${job.job_id}`;
-            let sourceTag = outputVideoPlayer.querySelector("source");
-            if (!sourceTag) {
-                sourceTag = document.createElement("source");
-                outputVideoPlayer.appendChild(sourceTag);
-            }
-            sourceTag.src = streamUrl;
-            sourceTag.type = "video/mp4";
+            const streamUrl = (job.output_video_url && !job.output_video_url.includes("youtube.com"))
+                ? job.output_video_url
+                : `/api/stream/${job.job_id}`;
             outputVideoPlayer.src = streamUrl;
             outputVideoPlayer.load();
-
             applyAudioTrackMode();
+            outputVideoPlayer.play().catch(e => console.log("Stream play prevented:", e));
         }
 
         videoPlaceholder.classList.add("hidden");

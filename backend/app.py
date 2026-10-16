@@ -2,6 +2,7 @@
 FastAPI Server for AI Video Translator
 Provides REST API endpoints for video upload, URL processing, translation progress polling,
 preview streaming, and output video download.
+Supports 60+ global languages, speaker gender detection, time-preserving speech synthesis, and neural lip-sync.
 """
 
 import os
@@ -18,12 +19,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, BackgroundTasks, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from backend.config import UPLOAD_DIR, OUTPUT_DIR, SUPPORTED_LANGUAGES
+from backend.config import UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR, SUPPORTED_LANGUAGES
 from database.db_manager import db
 from backend.pipeline.orchestrator import TranslationOrchestrator
 
@@ -45,6 +46,7 @@ app.add_middleware(
 )
 
 orchestrator = TranslationOrchestrator()
+router = APIRouter()
 
 
 class UrlTranslationRequest(BaseModel):
@@ -70,34 +72,6 @@ class EmailAuthRequest(BaseModel):
     name: Optional[str] = None
 
 
-@app.post("/api/auth/google")
-def auth_google(payload: GoogleAuthRequest):
-    """Authenticate or register user with Google / Gmail."""
-    email = payload.email or "preethish@gmail.com"
-    name = payload.name or email.split("@")[0].capitalize()
-    avatar_url = payload.avatar_url or f"https://api.dicebear.com/7.x/initials/svg?seed={name}"
-    user = db.create_or_get_user(email=email, name=name, avatar_url=avatar_url, provider="google")
-    return {"status": "success", "user": user, "message": "Signed in with Google successfully"}
-
-
-@app.post("/api/auth/login")
-def auth_login(payload: EmailAuthRequest):
-    """Email authentication endpoint."""
-    name = payload.name or payload.email.split("@")[0].capitalize()
-    avatar_url = f"https://api.dicebear.com/7.x/initials/svg?seed={name}"
-    user = db.create_or_get_user(email=payload.email, name=name, avatar_url=avatar_url, provider="email")
-    return {"status": "success", "user": user, "message": "Logged in successfully"}
-
-
-@app.get("/api/auth/user")
-def get_current_user():
-    """Retrieve default/latest active user profile."""
-    user = db.get_user_by_email("preethish@gmail.com")
-    if not user:
-        user = db.create_or_get_user("preethish@gmail.com", "Preethish", provider="google")
-    return {"status": "authenticated", "user": user}
-
-
 def run_translation_background(job_id: str):
     """Background task worker to run orchestrator pipeline."""
     try:
@@ -105,18 +79,19 @@ def run_translation_background(job_id: str):
         orchestrator.process_job(job_id)
         logger.info("Successfully finished translation job: %s", job_id)
     except Exception as e:
-        logger.error("Job %s execution failed: %s", job_id, e)
+        logger.error("Job %s execution failed: %s", job_id, e, exc_info=True)
 
 
-@app.get("/health")
-@app.get("/api/health")
+# -------------------------------------------------------------
+# Health and Languages Catalog
+# -------------------------------------------------------------
+@router.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "AI Video Translator Local Backend"}
+    return {"status": "healthy", "service": "AI Video Translator API"}
 
 
-@app.get("/api/languages")
+@router.get("/languages")
 def get_languages():
-
     """Returns catalog of supported languages and their details."""
     languages = []
     for code, info in SUPPORTED_LANGUAGES.items():
@@ -129,11 +104,42 @@ def get_languages():
     return {"status": "success", "languages": languages}
 
 
-@app.post("/api/translate/file")
+# -------------------------------------------------------------
+# Authentication Endpoints
+# -------------------------------------------------------------
+@router.post("/auth/google")
+def auth_google(payload: GoogleAuthRequest):
+    email = payload.email or "preethish@gmail.com"
+    name = payload.name or email.split("@")[0].capitalize()
+    avatar_url = payload.avatar_url or f"https://api.dicebear.com/7.x/initials/svg?seed={name}"
+    user = db.create_or_get_user(email=email, name=name, avatar_url=avatar_url, provider="google")
+    return {"status": "success", "user": user, "message": "Signed in with Google successfully"}
+
+
+@router.post("/auth/login")
+def auth_login(payload: EmailAuthRequest):
+    name = payload.name or payload.email.split("@")[0].capitalize()
+    avatar_url = f"https://api.dicebear.com/7.x/initials/svg?seed={name}"
+    user = db.create_or_get_user(email=payload.email, name=name, avatar_url=avatar_url, provider="email")
+    return {"status": "success", "user": user, "message": "Logged in successfully"}
+
+
+@router.get("/auth/user")
+def get_current_user():
+    user = db.get_user_by_email("preethish@gmail.com")
+    if not user:
+        user = db.create_or_get_user("preethish@gmail.com", "Preethish", provider="google")
+    return {"status": "authenticated", "user": user}
+
+
+# -------------------------------------------------------------
+# Translation Triggers
+# -------------------------------------------------------------
+@router.post("/translate/file")
 async def translate_video_file(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
-    target_lang: str = Form(...),
+    target_lang: str = Form("ta"),
     source_lang: str = Form("auto"),
     gender_override: str = Form("auto"),
     lip_sync_enabled: bool = Form(True),
@@ -171,11 +177,11 @@ async def translate_video_file(
     return {
         "status": "success",
         "job_id": job_id,
-        "message": "Video uploaded successfully. Translation started."
+        "message": "Video uploaded successfully. Authentic AI translation pipeline started."
     }
 
 
-@app.post("/api/translate/url")
+@router.post("/translate/url")
 def translate_video_url(
     payload: UrlTranslationRequest,
     background_tasks: BackgroundTasks
@@ -207,13 +213,15 @@ def translate_video_url(
     return {
         "status": "success",
         "job_id": job_id,
-        "message": "URL received. Video downloading and translation started."
+        "message": "URL received. Video downloading and authentic translation pipeline started."
     }
 
 
-@app.get("/api/jobs/latest")
+# -------------------------------------------------------------
+# Polling and Media Streaming / Download Endpoints
+# -------------------------------------------------------------
+@router.get("/jobs/latest")
 def get_latest_job():
-    """Returns the most recent translation job."""
     jobs = db.list_jobs(limit=1)
     if not jobs:
         return {"status": "none", "job": None}
@@ -234,9 +242,8 @@ def get_latest_job():
     }
 
 
-@app.get("/api/jobs/{job_id}")
+@router.get("/jobs/{job_id}")
 def get_job_status(job_id: str):
-    """Poll job progress, status, and speaker segments."""
     job = db.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -255,7 +262,7 @@ def get_job_status(job_id: str):
     }
 
 
-@app.get("/api/download/{job_id}")
+@router.get("/download/{job_id}")
 def download_translated_video(job_id: str):
     """Download the completed translated MP4 video."""
     job = db.get_job(job_id)
@@ -266,9 +273,7 @@ def download_translated_video(job_id: str):
     if not os.path.exists(output_path):
         raise HTTPException(status_code=404, detail="Output video file does not exist on server")
 
-    # Record download in database
     db.record_download(str(uuid.uuid4()), job_id)
-
     filename = f"translated_{job.get('target_language', 'video')}_{job_id[:8]}.mp4"
     return FileResponse(
         path=output_path,
@@ -278,7 +283,7 @@ def download_translated_video(job_id: str):
     )
 
 
-@app.get("/api/stream/{job_id}")
+@router.get("/stream/{job_id}")
 def stream_translated_video(job_id: str):
     """Stream video for in-browser video player preview."""
     job = db.get_job(job_id)
@@ -292,71 +297,88 @@ def stream_translated_video(job_id: str):
     return FileResponse(path=output_path, media_type="video/mp4")
 
 
-@app.get("/api/audio/{job_id}")
+@router.get("/audio/{job_id}")
 def stream_audio(job_id: str):
-    """Stream translated neural audio track."""
-    from backend.config import TEMP_DIR
+    """Stream translated neural audio track in MP3 or WAV format."""
     temp_job_dir = TEMP_DIR / job_id
-    audio_path = temp_job_dir / "translated_master_audio.wav"
-    if audio_path.exists():
-        return FileResponse(path=str(audio_path), media_type="audio/wav")
+    mp3_path = temp_job_dir / "translated_master_audio.mp3"
+    if mp3_path.exists():
+        return FileResponse(path=str(mp3_path), media_type="audio/mpeg")
 
-    # Fallback to direct neural stream
-    job = db.get_job(job_id) or {}
-    lang = job.get("target_language", "ta")
-    import urllib.request, urllib.parse
-    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={lang}&client=tw-ob&q=" + urllib.parse.quote("Translation audio ready")
-    req = urllib.request.Request(tts_url, headers={"User-Agent": "Mozilla/5.0"})
-    audio_bytes = urllib.request.urlopen(req, timeout=8).read()
-    return Response(content=audio_bytes, media_type="audio/mpeg")
+    wav_path = temp_job_dir / "translated_master_audio.wav"
+    if wav_path.exists():
+        return FileResponse(path=str(wav_path), media_type="audio/wav")
+
+    raise HTTPException(status_code=404, detail="Translated audio not found or still processing")
 
 
-@app.get("/api/download/audio/{job_id}")
+@router.get("/download/audio/{job_id}")
 def download_audio(job_id: str):
-    """Download translated audio track."""
+    """Download authentic translated audio track file."""
     job = db.get_job(job_id) or {}
-    lang = job.get("target_language", "ta")
-    filename = f"translated_audio_{lang}_{job_id[:8]}.mp3"
+    lang = job.get("target_language", "audio")
 
-    from backend.config import TEMP_DIR
     temp_job_dir = TEMP_DIR / job_id
-    audio_path = temp_job_dir / "translated_master_audio.wav"
-    if audio_path.exists():
-        return FileResponse(path=str(audio_path), media_type="audio/wav", filename=f"translated_audio_{lang}_{job_id[:8]}.wav")
+    mp3_path = temp_job_dir / "translated_master_audio.mp3"
+    if mp3_path.exists():
+        return FileResponse(
+            path=str(mp3_path),
+            media_type="audio/mpeg",
+            filename=f"translated_audio_{lang}_{job_id[:8]}.mp3"
+        )
 
-    import urllib.request, urllib.parse
-    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={lang}&client=tw-ob&q=" + urllib.parse.quote("Translation audio track")
-    req = urllib.request.Request(tts_url, headers={"User-Agent": "Mozilla/5.0"})
-    audio_bytes = urllib.request.urlopen(req, timeout=8).read()
-    return Response(content=audio_bytes, media_type="audio/mpeg", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    wav_path = temp_job_dir / "translated_master_audio.wav"
+    if wav_path.exists():
+        return FileResponse(
+            path=str(wav_path),
+            media_type="audio/wav",
+            filename=f"translated_audio_{lang}_{job_id[:8]}.wav"
+        )
+
+    raise HTTPException(status_code=404, detail="Audio file not ready")
 
 
-@app.get("/api/subtitles/{job_id}")
+@router.get("/subtitles/{job_id}")
 def download_subtitles(job_id: str):
-    """Download timestamped translated subtitles."""
+    """Download timestamped translated subtitles (.SRT)."""
     job = db.get_job(job_id) or {}
-    lang = job.get("target_language", "ta")
+    lang = job.get("target_language", "subtitles")
+
+    temp_job_dir = TEMP_DIR / job_id
+    srt_file = temp_job_dir / "subtitles.srt"
+    if srt_file.exists():
+        return FileResponse(
+            path=str(srt_file),
+            media_type="text/plain; charset=utf-8",
+            filename=f"translated_subtitles_{lang}_{job_id[:8]}.srt"
+        )
+
     segments = db.get_speaker_segments(job_id)
     lines = []
     for idx, seg in enumerate(segments, 1):
-        s_sec = seg.get("start_time", (idx - 1) * 10.0)
-        e_sec = seg.get("end_time", s_sec + 10.0)
+        s_sec = seg.get("start_time", (idx - 1) * 5.0)
+        e_sec = seg.get("end_time", s_sec + 5.0)
         hrs = int(s_sec // 3600); mins = int((s_sec % 3600) // 60); secs = int(s_sec % 60); ms = int((s_sec % 1) * 1000)
         e_hrs = int(e_sec // 3600); e_mins = int((e_sec % 3600) // 60); e_secs = int(e_sec % 60); e_ms = int((e_sec % 1) * 1000)
-        txt = seg.get("original_text", "")
+        txt = seg.get("translated_text") or seg.get("original_text", "")
         lines.append(f"{idx}\n{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d} --> {e_hrs:02d}:{e_mins:02d}:{e_secs:02d},{e_ms:03d}\n{txt}\n")
 
+    content = "\n".join(lines) if lines else "1\n00:00:00,000 --> 00:00:05,000\nSubtitles Ready\n"
     return Response(
-        content="\n".join(lines) if lines else "1\n00:00:00,000 --> 00:00:10,000\nSubtitles Ready\n",
+        content=content,
         media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="subtitles_{lang}_{job_id[:8]}.srt"'}
+        headers={"Content-Disposition": f'attachment; filename="translated_subtitles_{lang}_{job_id[:8]}.srt"'}
     )
 
 
+# Mount router at BOTH root and /api for seamless proxying
+app.include_router(router, prefix="/api")
+app.include_router(router)
+
 # Mount Frontend Static Directory
-frontend_dir = PROJECT_ROOT / "frontend"
-if frontend_dir.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+static_dir = PROJECT_ROOT / "public" if (PROJECT_ROOT / "public").exists() else (PROJECT_ROOT / "frontend")
+if static_dir.exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 
 if __name__ == "__main__":

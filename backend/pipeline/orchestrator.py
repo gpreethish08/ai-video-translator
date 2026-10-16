@@ -68,28 +68,32 @@ class TranslationOrchestrator:
 
         try:
             # Step 1: Input Acquisition
-            update_progress(5, "Acquiring input video...")
+            update_progress(5, "Acquiring input media (video or URL)...")
             video_input_path = job["original_video_path"]
-            if job["input_source_type"] == "URL" and not os.path.exists(video_input_path):
+            if job["input_source_type"] == "URL":
                 video_input_path = self.extractor.download_url_video(
                     job["input_url"], str(UPLOAD_DIR), job_id
                 )
-                db.update_job_progress(job_id, status="PROCESSING", progress=10, step_desc="Video downloaded successfully")
+                db.update_job_progress(job_id, status="PROCESSING", progress=15, step_desc="Media downloaded successfully")
 
             # Validate duration (<= 40 minutes)
-            update_progress(12, "Inspecting video format and duration...")
+            update_progress(15, "Inspecting media format and duration...")
             meta = self.extractor.get_video_metadata(video_input_path)
             duration = meta.get("duration", 0.0)
+            if duration <= 0.0:
+                duration = 10.0
             if duration > MAX_VIDEO_DURATION_SECONDS:
                 raise ValueError(f"Video duration ({duration/60:.1f} mins) exceeds maximum limit of 40 minutes.")
 
             # Step 2: Audio Demuxing
-            update_progress(20, "Extracting high-resolution 16kHz audio track...")
+            update_progress(25, "Extracting high-resolution 16kHz audio track...")
             raw_audio_path = str(temp_job_dir / "extracted_audio.wav")
-            self.extractor.extract_audio(video_input_path, raw_audio_path)
+            extracted = self.extractor.extract_audio(video_input_path, raw_audio_path)
+            if not extracted or not os.path.exists(raw_audio_path):
+                raise RuntimeError("Failed to extract audio track from video file.")
 
             # Step 3: Transcription
-            update_progress(35, "Transcribing speech and extracting timestamps...")
+            update_progress(40, "Transcribing actual speech and extracting timestamps with Whisper...")
             transcription_result = self.transcriber.transcribe(
                 raw_audio_path, forced_lang=job.get("source_language", "auto")
             )
@@ -97,7 +101,7 @@ class TranslationOrchestrator:
             segments = transcription_result.get("segments", [])
 
             # Step 4: Speaker Diarization & Gender Detection
-            update_progress(50, "Detecting speaker gender (Male / Female) and vocal pitch...")
+            update_progress(55, "Detecting speaker gender (Male / Female) and vocal pitch...")
             for idx, seg in enumerate(segments):
                 gender_info = self.gender_detector.detect_gender_from_wav(
                     raw_audio_path, start_sec=seg["start"], end_sec=seg["end"]
@@ -105,7 +109,14 @@ class TranslationOrchestrator:
                 seg["detected_gender"] = gender_info["gender"]
                 seg["pitch_mean_hz"] = gender_info["pitch_mean_hz"]
 
-                # Store segment in database
+            # Step 5: Multi-Language Neural Translation
+            update_progress(68, f"Translating speech segments into '{target_lang}' with high-accuracy translator...")
+            translated_segments = self.translator.translate_segments(
+                segments, source_lang=detected_src_lang, target_lang=target_lang
+            )
+
+            # Store translated segments in database
+            for idx, seg in enumerate(translated_segments):
                 db.add_speaker_segment({
                     "id": str(uuid.uuid4()),
                     "job_id": job_id,
@@ -113,19 +124,18 @@ class TranslationOrchestrator:
                     "start_time": seg["start"],
                     "end_time": seg["end"],
                     "duration": seg["end"] - seg["start"],
-                    "original_text": seg["text"],
-                    "detected_gender": seg["detected_gender"],
-                    "pitch_mean_hz": seg["pitch_mean_hz"]
+                    "original_text": seg.get("original_text", seg.get("text", "")),
+                    "translated_text": seg.get("translated_text", ""),
+                    "detected_gender": seg.get("detected_gender", "MALE"),
+                    "pitch_mean_hz": seg.get("pitch_mean_hz", 120.0)
                 })
 
-            # Step 5: Multi-Language Neural Translation
-            update_progress(65, f"Translating speech segments into '{target_lang}'...")
-            translated_segments = self.translator.translate_segments(
-                segments, source_lang=detected_src_lang, target_lang=target_lang
-            )
+            # Generate Subtitles SRT file
+            srt_path = str(temp_job_dir / "subtitles.srt")
+            self._generate_srt_file(translated_segments, srt_path)
 
             # Step 6: Voice Synthesis with Pitch & Tempo Alignment
-            update_progress(78, "Synthesizing gender-matched voice and synchronizing speech tempo...")
+            update_progress(80, "Synthesizing gender-matched voice and synchronizing speech tempo...")
             master_audio_path = str(temp_job_dir / "translated_master_audio.wav")
             self.synthesizer.build_full_audio_track(
                 segments=translated_segments,
@@ -138,7 +148,7 @@ class TranslationOrchestrator:
             # Step 7 & 8: Lip-Sync Synchronization & Final Assembly
             final_output_path = str(OUTPUT_DIR / f"{job_id}_translated.mp4")
             if lip_sync_enabled:
-                update_progress(88, "Synchronizing lip movement with translated speech (Wav2Lip)...")
+                update_progress(90, "Synchronizing lip movement with translated speech (Wav2Lip)...")
                 synced_video = str(temp_job_dir / "lip_synced.mp4")
                 self.lip_syncer.synchronize_lips(
                     video_input_path, master_audio_path, synced_video, fast_mode=fast_parallel
@@ -180,3 +190,23 @@ class TranslationOrchestrator:
             logger.error("Job %s failed: %s", job_id, e, exc_info=True)
             db.update_job_progress(job_id, status="FAILED", progress=0, step_desc="Error encountered", error=str(e))
             raise
+
+    def _generate_srt_file(self, segments: list, srt_path: str):
+        """Creates SubRip (.srt) subtitle file for video."""
+        lines = []
+        for idx, seg in enumerate(segments, 1):
+            s = float(seg.get("start", seg.get("start_time", 0.0)))
+            e = float(seg.get("end", seg.get("end_time", s + 2.0)))
+
+            def fmt(sec):
+                hrs = int(sec // 3600)
+                mins = int((sec % 3600) // 60)
+                secs = int(sec % 60)
+                ms = int((sec - int(sec)) * 1000)
+                return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
+
+            txt = seg.get("translated_text", seg.get("original_text", ""))
+            lines.append(f"{idx}\n{fmt(s)} --> {fmt(e)}\n{txt}\n")
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))

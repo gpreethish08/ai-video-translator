@@ -11,6 +11,8 @@ import subprocess
 import logging
 import wave
 import struct
+import urllib.request
+import urllib.parse
 import numpy as np
 from typing import List, Dict, Any, Optional
 from backend.config import SUPPORTED_LANGUAGES
@@ -36,41 +38,76 @@ class VoiceSynthesizer:
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(output_path)
 
-    def synthesize_segment(self, text: str, voice_id: str, final_wav_path: str) -> bool:
+    def synthesize_segment(self, text: str, voice_id: str, final_wav_path: str, lang_code: str = "en") -> bool:
         """
         Synthesize speech audio for a text segment.
-        Edge-TTS outputs MP3 stream, which is immediately converted to a standard 16kHz mono PCM WAV.
+        Edge-TTS outputs MP3 stream, which is converted to 16kHz mono PCM WAV.
+        Falls back to Google TTS API then pyttsx3 if network or voice error occurs.
         """
-        os.makedirs(os.path.dirname(final_wav_path), exist_ok=True)
+        dir_name = os.path.dirname(final_wav_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
         raw_mp3_path = final_wav_path + ".mp3"
         try:
             # 1. Generate MP3 with Edge-TTS
             asyncio.run(self._generate_edge_tts(text, voice_id, raw_mp3_path))
-            
-            if not os.path.exists(raw_mp3_path) or os.path.getsize(raw_mp3_path) == 0:
-                return self._synthesize_fallback(text, final_wav_path)
 
-            # 2. Convert to standard 16kHz mono PCM WAV via FFmpeg
-            cmd = [
-                self.ffmpeg,
-                "-y",
-                "-i", raw_mp3_path,
-                "-acodec", "pcm_s16le",
-                "-ar", "16000",
-                "-ac", "1",
-                final_wav_path
-            ]
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            return os.path.exists(final_wav_path) and os.path.getsize(final_wav_path) > 100
+            if os.path.exists(raw_mp3_path) and os.path.getsize(raw_mp3_path) > 100:
+                cmd = [
+                    self.ffmpeg,
+                    "-y",
+                    "-i", raw_mp3_path,
+                    "-acodec", "pcm_s16le",
+                    "-ar", "16000",
+                    "-ac", "1",
+                    final_wav_path
+                ]
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                if os.path.exists(final_wav_path) and os.path.getsize(final_wav_path) > 100:
+                    return True
         except Exception as e:
-            logger.warning("edge-tts generation failed: %s. Using fallback.", e)
-            return self._synthesize_fallback(text, final_wav_path)
+            logger.warning("edge-tts generation failed: %s. Trying Google TTS fallback.", e)
+
+        # 2. Try Google TTS API fallback
+        if self._synthesize_google_tts(text, lang_code, final_wav_path):
+            return True
+
+        # 3. Fallback to pyttsx3 offline
+        return self._synthesize_fallback(text, final_wav_path)
+
+    def _synthesize_google_tts(self, text: str, lang_code: str, output_wav_path: str) -> bool:
+        """Fallback to Google TTS public endpoint."""
+        raw_mp3 = output_wav_path + "_gtts.mp3"
+        try:
+            enc = urllib.parse.quote(text[:200])
+            url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={lang_code}&client=tw-ob&q={enc}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = resp.read()
+                if len(data) > 100:
+                    with open(raw_mp3, "wb") as f:
+                        f.write(data)
+                    cmd = [
+                        self.ffmpeg,
+                        "-y",
+                        "-i", raw_mp3,
+                        "-acodec", "pcm_s16le",
+                        "-ar", "16000",
+                        "-ac", "1",
+                        output_wav_path
+                    ]
+                    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                    return os.path.exists(output_wav_path) and os.path.getsize(output_wav_path) > 100
+        except Exception as e:
+            logger.debug("Google TTS fallback failed: %s", e)
         finally:
-            if os.path.exists(raw_mp3_path):
+            if os.path.exists(raw_mp3):
                 try:
-                    os.remove(raw_mp3_path)
+                    os.remove(raw_mp3)
                 except Exception:
                     pass
+        return False
 
     def _synthesize_fallback(self, text: str, output_path: str) -> bool:
         """Fallback offline TTS (pyttsx3) converted to 16kHz mono WAV."""
@@ -80,8 +117,7 @@ class VoiceSynthesizer:
             temp_out = output_path + "_raw.wav"
             engine.save_to_file(text, temp_out)
             engine.runAndWait()
-            
-            # Normalize to 16kHz mono
+
             cmd = [
                 self.ffmpeg,
                 "-y",
@@ -94,9 +130,9 @@ class VoiceSynthesizer:
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             if os.path.exists(temp_out):
                 os.remove(temp_out)
-            return os.path.exists(output_path)
+            return os.path.exists(output_path) and os.path.getsize(output_path) > 100
         except Exception as e:
-            logger.error("Fallback TTS also failed: %s", e)
+            logger.error("Fallback pyttsx3 also failed: %s", e)
             return False
 
     def time_align_audio(self, input_wav: str, target_duration: float, output_wav: str) -> str:
@@ -109,13 +145,10 @@ class VoiceSynthesizer:
             return input_wav
 
         speed_ratio = current_duration / target_duration
-        
         # Keep speed within reasonable, natural-sounding bounds (0.7x to 1.6x)
         speed_ratio = max(0.70, min(1.60, speed_ratio))
 
-        # Build FFmpeg atempo filter string (atempo must be between 0.5 and 2.0)
         filter_str = f"atempo={speed_ratio:.4f}"
-
         cmd = [
             self.ffmpeg,
             "-y",
@@ -146,17 +179,18 @@ class VoiceSynthesizer:
         """
         Synthesizes and stitches all translated speaker segments into a continuous,
         perfectly synchronized master audio track for the entire video.
+        Also produces a matching MP3 version for instant browser streaming.
         """
-        temp_dir = os.path.join(os.path.dirname(output_track_wav), "synth_segments")
+        base_dir = os.path.dirname(output_track_wav)
+        temp_dir = os.path.join(base_dir, "synth_segments") if base_dir else "synth_segments"
         os.makedirs(temp_dir, exist_ok=True)
 
         segment_files = []
         for i, seg in enumerate(segments):
-            text = seg.get("translated_text", seg.get("original_text", "")).strip()
+            text = (seg.get("translated_text") or seg.get("original_text") or seg.get("text", "")).strip()
             if not text:
                 continue
 
-            # Determine gender: override or auto-detected
             if gender_override in ["male", "female"]:
                 gender = gender_override.upper()
             else:
@@ -166,11 +200,11 @@ class VoiceSynthesizer:
             raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.wav")
             aligned_path = os.path.join(temp_dir, f"seg_{i:04d}_aligned.wav")
 
-            start_t = float(seg["start"])
-            end_t = float(seg["end"])
+            start_t = float(seg.get("start_time", seg.get("start", 0.0)))
+            end_t = float(seg.get("end_time", seg.get("end", start_t + 2.0)))
             target_dur = max(0.2, end_t - start_t)
 
-            if self.synthesize_segment(text, voice_id, raw_path):
+            if self.synthesize_segment(text, voice_id, raw_path, lang_code=target_lang):
                 effective_file = self.time_align_audio(raw_path, target_dur, aligned_path)
                 segment_files.append({
                     "path": effective_file,
@@ -178,8 +212,25 @@ class VoiceSynthesizer:
                     "end": end_t
                 })
 
-        # Assemble into full timeline
+        # Assemble into full timeline WAV
         self._assemble_timeline(segment_files, total_duration, output_track_wav)
+
+        # Transcode to MP3 for web streaming & download
+        mp3_output = os.path.splitext(output_track_wav)[0] + ".mp3"
+        try:
+            cmd = [
+                self.ffmpeg,
+                "-y",
+                "-i", output_track_wav,
+                "-c:a", "libmp3lame",
+                "-b:a", "192k",
+                mp3_output
+            ]
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            logger.info("Master MP3 audio created: %s", mp3_output)
+        except Exception as e:
+            logger.warning("MP3 transcode error: %s", e)
+
         return output_track_wav
 
     def _assemble_timeline(self, segments: List[Dict[str, Any]], total_duration: float, output_path: str):
@@ -206,8 +257,7 @@ class VoiceSynthesizer:
                 if start_idx < total_samples:
                     available = total_samples - start_idx
                     take = min(len(seg_data), available)
-                    
-                    # Direct insert with clipping to avoid overflow
+
                     slice_orig = timeline[start_idx : start_idx + take].astype(np.int32)
                     slice_new = seg_data[:take].astype(np.int32)
                     blended = np.clip(slice_orig + slice_new, -32768, 32767).astype(np.int16)
@@ -215,15 +265,17 @@ class VoiceSynthesizer:
             except Exception as e:
                 logger.error("Failed to merge segment %s into timeline: %s", path, e)
 
-        # Write pristine 16kHz mono PCM WAV
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        dir_name = os.path.dirname(output_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+
         with wave.open(output_path, "wb") as out_wf:
             out_wf.setnchannels(1)
             out_wf.setsampwidth(2)
             out_wf.setframerate(16000)
             out_wf.writeframes(timeline.tobytes())
-        
-        logger.info("Master audio timeline assembled successfully: %s (duration: %.2fs)", output_path, total_duration)
+
+        logger.info("Master audio timeline assembled: %s (duration: %.2fs)", output_path, total_duration)
 
     def _get_wav_duration(self, wav_path: str) -> float:
         """Helper to get accurate duration from WAV header."""

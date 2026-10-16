@@ -5,7 +5,9 @@ and parallel segment slicing for up to 40-minute videos.
 """
 
 import os
+import sys
 import json
+import shutil
 import subprocess
 import logging
 from pathlib import Path
@@ -18,6 +20,18 @@ class AudioVideoExtractor:
     def __init__(self, ffmpeg_bin: str = "ffmpeg", ffprobe_bin: str = "ffprobe"):
         self.ffmpeg = ffmpeg_bin
         self.ffprobe = ffprobe_bin
+
+    def _get_ytdlp_cmd(self) -> List[str]:
+        """Finds the most capable yt-dlp executable installed on the system."""
+        candidates = [
+            r"C:\Users\DELL\AppData\Local\Programs\Python\Python311\Scripts\yt-dlp.exe",
+            shutil.which("yt-dlp"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311\Scripts\yt-dlp.exe"),
+        ]
+        for c in candidates:
+            if c and os.path.exists(c):
+                return [c]
+        return [sys.executable, "-m", "yt_dlp"]
 
     def get_video_metadata(self, video_path: str) -> Dict[str, Any]:
         """Extract duration, resolution, frame rate, and audio stream details."""
@@ -33,7 +47,7 @@ class AudioVideoExtractor:
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
             stdout_str = result.stdout.decode('utf-8', errors='ignore')
             info = json.loads(stdout_str)
-            
+
             format_dict = info.get("format", {})
             duration = float(format_dict.get("duration", 0.0))
             video_streams = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
@@ -47,7 +61,7 @@ class AudioVideoExtractor:
             width = int(video_streams[0].get("width", 1280)) if video_streams else 1280
             height = int(video_streams[0].get("height", 720)) if video_streams else 720
             fps_eval = video_streams[0].get("r_frame_rate", "30/1") if video_streams else "30/1"
-            
+
             try:
                 num, den = map(float, fps_eval.split('/'))
                 fps = num / den if den != 0 else 30.0
@@ -60,11 +74,12 @@ class AudioVideoExtractor:
                 "height": height,
                 "fps": fps,
                 "has_audio": len(audio_streams) > 0,
+                "has_video": len(video_streams) > 0,
                 "size_bytes": os.path.getsize(video_path) if os.path.exists(video_path) else 0
             }
         except Exception as e:
             logger.error("Failed to extract video metadata: %s", e)
-            return {"duration": 10.0, "width": 1280, "height": 720, "fps": 30.0, "has_audio": True, "size_bytes": 0}
+            return {"duration": 15.0, "width": 1280, "height": 720, "fps": 30.0, "has_audio": True, "has_video": True, "size_bytes": 0}
 
     def extract_audio(self, video_path: str, output_wav_path: str, sample_rate: int = 16000) -> bool:
         """Extract high-fidelity 16kHz mono WAV audio track for transcription."""
@@ -82,63 +97,57 @@ class AudioVideoExtractor:
         try:
             logger.info("Extracting audio from %s to %s", video_path, output_wav_path)
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            return os.path.exists(output_wav_path)
+            return os.path.exists(output_wav_path) and os.path.getsize(output_wav_path) > 0
         except subprocess.CalledProcessError as e:
             logger.error("FFmpeg audio extraction error: %s", e.stderr.decode('utf-8', errors='ignore'))
             return False
 
     def download_url_video(self, url: str, output_folder: str, job_id: str) -> str:
-        """Download video from YouTube or any direct video link using yt-dlp."""
+        """Download video/audio from YouTube or any direct video link using yt-dlp or ffmpeg."""
         os.makedirs(output_folder, exist_ok=True)
         output_template = os.path.join(output_folder, f"{job_id}_raw.%(ext)s")
-        
-        # Locate reliable yt-dlp executable
-        import shutil, sys
-        ytdlp_bin = None
-        for candidate_bin in [
-            shutil.which("yt-dlp"),
-            r"C:\Users\DELL\AppData\Local\Programs\Python\Python311\Scripts\yt-dlp.exe",
-        ]:
-            if candidate_bin and os.path.exists(candidate_bin):
-                ytdlp_bin = [candidate_bin]
-                break
-        if not ytdlp_bin:
-            ytdlp_bin = ["py", "-3.11", "-m", "yt_dlp"]
+        ytdlp_bin = self._get_ytdlp_cmd()
 
         cmd = ytdlp_bin + [
-            "--format", "mp4/best[ext=mp4]/best",
+            "-f", "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+            "--merge-output-format", "mp4",
             "--output", output_template,
             "--no-playlist",
             "--no-warnings",
-            "--js-runtimes", "node",
             "--max-filesize", "1500M",
             url
         ]
+
         try:
-            logger.info("Downloading video from URL: %s", url)
+            logger.info("Executing yt-dlp download for URL: %s", url)
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            
+
             # Find the downloaded file
-            for ext in ["mp4", "mkv", "webm"]:
+            final_mp4 = os.path.join(output_folder, f"{job_id}_input.mp4")
+            for ext in ["mp4", "mkv", "webm", "m4a", "mp3"]:
                 candidate = os.path.join(output_folder, f"{job_id}_raw.{ext}")
                 if os.path.exists(candidate):
-                    # Transcode to mp4 if needed
-                    final_mp4 = os.path.join(output_folder, f"{job_id}_input.mp4")
-                    self.normalize_to_mp4(candidate, final_mp4)
-                    return final_mp4
-            raise FileNotFoundError("Downloaded video file not found on disk")
+                    if ext == "mp4":
+                        shutil.copyfile(candidate, final_mp4)
+                        return final_mp4
+                    else:
+                        self.normalize_to_mp4(candidate, final_mp4)
+                        return final_mp4
+
+            raise FileNotFoundError("Downloaded file was not found on disk")
         except Exception as e:
-            logger.warning("yt-dlp failed or not found (%s). Attempting direct download...", e)
+            logger.warning("yt-dlp failed (%s). Attempting direct FFmpeg stream download...", e)
             return self._download_direct_stream(url, os.path.join(output_folder, f"{job_id}_input.mp4"))
 
     def _download_direct_stream(self, url: str, output_path: str) -> str:
-        """Direct stream download using ffmpeg or requests."""
+        """Direct stream download using ffmpeg."""
         cmd = [
             self.ffmpeg,
             "-y",
             "-i", url,
-            "-c", "copy",
-            "-bsf:a", "aac_adtstoasc",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-c:a", "aac",
             output_path
         ]
         try:
@@ -161,7 +170,23 @@ class AudioVideoExtractor:
             "-b:a", "192k",
             output_path
         ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        try:
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        except subprocess.CalledProcessError:
+            # If input is audio only, create a video with black frame
+            cmd_audio = [
+                self.ffmpeg,
+                "-y",
+                "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=25",
+                "-i", input_path,
+                "-c:v", "libx264",
+                "-tune", "stillimage",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-shortest",
+                output_path
+            ]
+            subprocess.run(cmd_audio, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
     def slice_into_chunks(self, video_path: str, chunk_duration_sec: int, temp_dir: str) -> List[Tuple[str, float, float]]:
         """Slice long video (up to 40 mins) into parallel chunks."""
