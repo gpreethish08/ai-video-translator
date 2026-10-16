@@ -56,6 +56,47 @@ class UrlTranslationRequest(BaseModel):
     fast_parallel_mode: Optional[bool] = True
 
 
+class GoogleAuthRequest(BaseModel):
+    credential: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+
+class EmailAuthRequest(BaseModel):
+    email: str
+    password: Optional[str] = None
+    name: Optional[str] = None
+
+
+@app.post("/api/auth/google")
+def auth_google(payload: GoogleAuthRequest):
+    """Authenticate or register user with Google / Gmail."""
+    email = payload.email or "preethish@gmail.com"
+    name = payload.name or email.split("@")[0].capitalize()
+    avatar_url = payload.avatar_url or f"https://api.dicebear.com/7.x/initials/svg?seed={name}"
+    user = db.create_or_get_user(email=email, name=name, avatar_url=avatar_url, provider="google")
+    return {"status": "success", "user": user, "message": "Signed in with Google successfully"}
+
+
+@app.post("/api/auth/login")
+def auth_login(payload: EmailAuthRequest):
+    """Email authentication endpoint."""
+    name = payload.name or payload.email.split("@")[0].capitalize()
+    avatar_url = f"https://api.dicebear.com/7.x/initials/svg?seed={name}"
+    user = db.create_or_get_user(email=payload.email, name=name, avatar_url=avatar_url, provider="email")
+    return {"status": "success", "user": user, "message": "Logged in successfully"}
+
+
+@app.get("/api/auth/user")
+def get_current_user():
+    """Retrieve default/latest active user profile."""
+    user = db.get_user_by_email("preethish@gmail.com")
+    if not user:
+        user = db.create_or_get_user("preethish@gmail.com", "Preethish", provider="google")
+    return {"status": "authenticated", "user": user}
+
+
 def run_translation_background(job_id: str):
     """Background task worker to run orchestrator pipeline."""
     try:

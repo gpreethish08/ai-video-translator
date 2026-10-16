@@ -3,6 +3,19 @@
 -- Multi-database support: SQLite 3 / PostgreSQL 14+ / MySQL 8+
 -- ====================================================================
 
+-- 0. Users & Authentication (Google / Gmail OAuth)
+CREATE TABLE IF NOT EXISTS users (
+    id VARCHAR(64) PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    avatar_url TEXT DEFAULT NULL,
+    auth_provider VARCHAR(50) DEFAULT 'google',
+    plan_tier VARCHAR(50) DEFAULT 'free',
+    credits_remaining INTEGER DEFAULT 10,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 1. Supported Languages Catalog
 CREATE TABLE IF NOT EXISTS supported_languages (
     code VARCHAR(10) PRIMARY KEY,

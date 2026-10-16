@@ -188,6 +188,33 @@ class DatabaseManager:
             cursor.execute(query, (log_id, job_id, ip, fmt))
             conn.commit()
 
+    def create_or_get_user(self, email: str, name: str, avatar_url: str = None, provider: str = "google") -> Dict[str, Any]:
+        """Create a user if not existing, or return existing user record."""
+        import uuid
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            
+            user_id = str(uuid.uuid4())
+            cursor.execute("""
+                INSERT INTO users (id, email, name, avatar_url, auth_provider)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, email, name, avatar_url, provider))
+            conn.commit()
+            cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            return dict(cursor.fetchone())
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Find user by email."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
 
 # Global Singleton Instance
 db = DatabaseManager()
