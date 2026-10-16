@@ -1,0 +1,12 @@
+backend/
+database/
+java/
+uploads/
+outputs/
+temp/
+*.mp4
+*.wav
+*.mp3
+*.db
+.git/
+node_modules/
