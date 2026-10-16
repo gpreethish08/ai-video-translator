@@ -1,4 +1,7 @@
 @echo off
+:: Switch to the directory where start.bat is located
+cd /d "%~dp0"
+
 echo ===================================================
 echo       Starting AI Video Translator Studio
 echo ===================================================
