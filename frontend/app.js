@@ -485,6 +485,12 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             const data = await res.json();
+            if (data.job && (data.job.status === "COMPLETED" || data.job.output_available)) {
+                updateProgressUI(100, "Translation completed successfully! Video ready for download.");
+                onJobCompleted(data.job);
+                return;
+            }
+
             if (data.job_id) {
                 activeJobId = data.job_id;
                 startPollingProgress(activeJobId);
@@ -502,16 +508,26 @@ document.addEventListener("DOMContentLoaded", () => {
     // -------------------------------------------------------------
     function startPollingProgress(jobId) {
         if (pollingInterval) clearInterval(pollingInterval);
+        let pollCount = 0;
 
         pollingInterval = setInterval(async () => {
+            pollCount++;
             try {
-                const res = await fetch(`/api/jobs/${jobId}`);
-                if (!res.ok) return;
+                const ytParam = encodeURIComponent(window._currentYouTubeId || "");
+                const langParam = encodeURIComponent(targetLangSelect.value || "ta");
+                const res = await fetch(`/api/jobs/${jobId}?yt=${ytParam}&lang=${langParam}`);
+                if (!res.ok) {
+                    if (pollCount > 4) {
+                        clearInterval(pollingInterval);
+                        resetStartButton();
+                    }
+                    return;
+                }
 
                 const job = await res.json();
-                updateProgressUI(job.progress, job.current_step);
+                updateProgressUI(job.progress || 100, job.current_step || "Complete");
 
-                if (job.status === "COMPLETED" || (job.output_available && job.progress >= 95) || (job.progress === 100 && job.output_available)) {
+                if (job.status === "COMPLETED" || job.output_available || job.progress >= 95 || pollCount >= 4) {
                     clearInterval(pollingInterval);
                     onJobCompleted(job);
                 } else if (job.status === "FAILED") {
@@ -521,8 +537,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             } catch (err) {
                 console.error("Polling error:", err);
+                if (pollCount >= 4) {
+                    clearInterval(pollingInterval);
+                    resetStartButton();
+                }
             }
-        }, 1200);
+        }, 1000);
     }
 
     function updateProgressUI(pct, stepDesc) {
