@@ -54,6 +54,7 @@ class UrlTranslationRequest(BaseModel):
     gender_override: Optional[str] = "auto"
     lip_sync_enabled: Optional[bool] = True
     fast_parallel_mode: Optional[bool] = True
+    custom_script: Optional[str] = None
 
 
 class GoogleAuthRequest(BaseModel):
@@ -136,7 +137,8 @@ async def translate_video_file(
     source_lang: str = Form("auto"),
     gender_override: str = Form("auto"),
     lip_sync_enabled: bool = Form(True),
-    fast_parallel_mode: bool = Form(True)
+    fast_parallel_mode: bool = Form(True),
+    custom_script: Optional[str] = Form(None)
 ):
     job_id = str(uuid.uuid4())
     orig_name = video.filename or "uploaded_video.mp4"

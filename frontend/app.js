@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const genderSelect = document.getElementById("gender-mode-select");
     const lipSyncToggle = document.getElementById("lip-sync-toggle");
     const fastModeToggle = document.getElementById("fast-mode-toggle");
+    const customScriptInput = document.getElementById("custom-script-input");
     const startBtn = document.getElementById("start-translation-btn");
 
     // Progress Elements
@@ -363,6 +364,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 formData.append("gender_override", genderOverride);
                 formData.append("lip_sync_enabled", lipSync);
                 formData.append("fast_parallel_mode", fastMode);
+                const customScript = customScriptInput ? customScriptInput.value.trim() : "";
+                if (customScript) {
+                    formData.append("custom_script", customScript);
+                }
 
                 res = await fetch("/api/translate/file", {
                     method: "POST",
@@ -374,6 +379,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 const ytId = extractYouTubeId(urlVal);
                 window._currentYouTubeId = ytId;
                 window._currentInputUrl = urlVal;
+                const customScript = customScriptInput ? customScriptInput.value.trim() : "";
 
                 res = await fetch("/api/translate/url", {
                     method: "POST",
@@ -383,7 +389,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         target_lang: targetLang,
                         gender_override: genderOverride,
                         lip_sync_enabled: lipSync,
-                        fast_parallel_mode: fastMode
+                        fast_parallel_mode: fastMode,
+                        custom_script: customScript || null
                     })
                 });
             }
