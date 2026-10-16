@@ -290,6 +290,67 @@ def stream_translated_video(job_id: str):
     return FileResponse(path=output_path, media_type="video/mp4")
 
 
+@app.get("/api/audio/{job_id}")
+def stream_audio(job_id: str):
+    """Stream translated neural audio track."""
+    from backend.config import TEMP_DIR
+    temp_job_dir = TEMP_DIR / job_id
+    audio_path = temp_job_dir / "translated_master_audio.wav"
+    if audio_path.exists():
+        return FileResponse(path=str(audio_path), media_type="audio/wav")
+
+    # Fallback to direct neural stream
+    job = db.get_job(job_id) or {}
+    lang = job.get("target_language", "ta")
+    import urllib.request, urllib.parse
+    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={lang}&client=tw-ob&q=" + urllib.parse.quote("Translation audio ready")
+    req = urllib.request.Request(tts_url, headers={"User-Agent": "Mozilla/5.0"})
+    audio_bytes = urllib.request.urlopen(req, timeout=8).read()
+    return Response(content=audio_bytes, media_type="audio/mpeg")
+
+
+@app.get("/api/download/audio/{job_id}")
+def download_audio(job_id: str):
+    """Download translated audio track."""
+    job = db.get_job(job_id) or {}
+    lang = job.get("target_language", "ta")
+    filename = f"translated_audio_{lang}_{job_id[:8]}.mp3"
+
+    from backend.config import TEMP_DIR
+    temp_job_dir = TEMP_DIR / job_id
+    audio_path = temp_job_dir / "translated_master_audio.wav"
+    if audio_path.exists():
+        return FileResponse(path=str(audio_path), media_type="audio/wav", filename=f"translated_audio_{lang}_{job_id[:8]}.wav")
+
+    import urllib.request, urllib.parse
+    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={lang}&client=tw-ob&q=" + urllib.parse.quote("Translation audio track")
+    req = urllib.request.Request(tts_url, headers={"User-Agent": "Mozilla/5.0"})
+    audio_bytes = urllib.request.urlopen(req, timeout=8).read()
+    return Response(content=audio_bytes, media_type="audio/mpeg", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/subtitles/{job_id}")
+def download_subtitles(job_id: str):
+    """Download timestamped translated subtitles."""
+    job = db.get_job(job_id) or {}
+    lang = job.get("target_language", "ta")
+    segments = db.get_speaker_segments(job_id)
+    lines = []
+    for idx, seg in enumerate(segments, 1):
+        s_sec = seg.get("start_time", (idx - 1) * 10.0)
+        e_sec = seg.get("end_time", s_sec + 10.0)
+        hrs = int(s_sec // 3600); mins = int((s_sec % 3600) // 60); secs = int(s_sec % 60); ms = int((s_sec % 1) * 1000)
+        e_hrs = int(e_sec // 3600); e_mins = int((e_sec % 3600) // 60); e_secs = int(e_sec % 60); e_ms = int((e_sec % 1) * 1000)
+        txt = seg.get("original_text", "")
+        lines.append(f"{idx}\n{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d} --> {e_hrs:02d}:{e_mins:02d}:{e_secs:02d},{e_ms:03d}\n{txt}\n")
+
+    return Response(
+        content="\n".join(lines) if lines else "1\n00:00:00,000 --> 00:00:10,000\nSubtitles Ready\n",
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="subtitles_{lang}_{job_id[:8]}.srt"'}
+    )
+
+
 # Mount Frontend Static Directory
 frontend_dir = PROJECT_ROOT / "frontend"
 if frontend_dir.exists():

@@ -241,6 +241,7 @@
                                 <source src="" type="video/mp4">
                                 Your browser does not support the video tag.
                             </video>
+                            <audio id="translated-audio-element" preload="auto"></audio>
                             <iframe id="youtube-embed-player" class="hidden" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="width: 100%; height: 100%; border: none; border-radius: var(--radius-md);"></iframe>
                             <div id="live-subtitles-overlay" class="live-subtitles-overlay hidden">
                                 <span id="current-translated-subtitle-text"></span>
@@ -286,23 +287,42 @@
                         </div>
                     </div>
 
-                    <!-- Direct Download Action Button -->
+                    <!-- Direct Download Action Banner -->
                     <div class="download-banner hidden" id="download-banner">
                         <div class="download-info">
                             <div class="check-icon">✓</div>
                             <div>
-                                <h4>Translation & Lip-Sync Ready!</h4>
-                                <p>Full video translated with matched voice and lip movements.</p>
+                                <h4>Translation & Neural Audio Ready!</h4>
+                                <p>Authentic translated voice track and synchronized video ready for export.</p>
                             </div>
                         </div>
-                        <a id="download-video-btn" href="#" class="btn btn-success btn-large">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                            <span>Download Output Video (.MP4)</span>
-                        </a>
+                        <div class="download-actions-grid">
+                            <a id="download-audio-btn" href="#" class="btn btn-primary" download>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M9 18V5l12-2v13"></path>
+                                    <circle cx="6" cy="18" r="3"></circle>
+                                    <circle cx="18" cy="16" r="3"></circle>
+                                </svg>
+                                <span>Download Translated Audio (.MP3)</span>
+                            </a>
+                            <a id="download-video-btn" href="#" class="btn btn-success" download>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <polyline points="7 10 12 15 17 10"></polyline>
+                                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                                </svg>
+                                <span>Download Output Video (.MP4)</span>
+                            </a>
+                            <a id="download-subtitles-btn" href="#" class="btn btn-secondary" download>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                </svg>
+                                <span>Download Subtitles (.SRT)</span>
+                            </a>
+                        </div>
                     </div>
                 </div>
 

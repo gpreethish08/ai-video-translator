@@ -40,8 +40,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const readyPill = document.getElementById("ready-pill");
     const downloadBanner = document.getElementById("download-banner");
     const downloadBtn = document.getElementById("download-video-btn");
+    const downloadAudioBtn = document.getElementById("download-audio-btn");
+    const downloadSubtitlesBtn = document.getElementById("download-subtitles-btn");
 
     // Audio & Subtitles Controls
+    const translatedAudioElement = document.getElementById("translated-audio-element");
     const audioControlsBar = document.getElementById("audio-controls-bar");
     const trackTranslatedRadio = document.getElementById("track-translated-radio");
     const trackOriginalRadio = document.getElementById("track-original-radio");
@@ -490,9 +493,33 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBanner.classList.remove("hidden");
         if (audioControlsBar) audioControlsBar.classList.remove("hidden");
 
-        const targetLangCode = (job.target_language || "ta").toUpperCase();
+        const targetLang = (job.target_language || "ta").toLowerCase();
+        const targetLangCode = targetLang.toUpperCase();
         if (translatedTrackLabel) {
             translatedTrackLabel.textContent = `🔊 Translated Neural Audio (${targetLangCode})`;
+        }
+
+        // Set up authentic neural translated audio element
+        const audioStreamUrl = `/api/audio/${job.job_id}`;
+        if (translatedAudioElement) {
+            translatedAudioElement.src = audioStreamUrl;
+            translatedAudioElement.load();
+        }
+
+        // Configure 3 Download Action Buttons
+        if (downloadAudioBtn) {
+            downloadAudioBtn.href = `/api/download/audio/${job.job_id}`;
+            downloadAudioBtn.setAttribute("download", `translated_audio_${targetLang}_${job.job_id.substring(0, 8)}.mp3`);
+        }
+
+        if (downloadSubtitlesBtn) {
+            downloadSubtitlesBtn.href = `/api/subtitles/${job.job_id}`;
+            downloadSubtitlesBtn.setAttribute("download", `translated_subtitles_${targetLang}_${job.job_id.substring(0, 8)}.srt`);
+        }
+
+        if (downloadBtn) {
+            downloadBtn.href = `/api/download/${job.job_id}`;
+            downloadBtn.setAttribute("download", `translated_${targetLang}_${job.job_id.substring(0, 8)}.mp3`);
         }
 
         const ytId = job.youtube_id || window._currentYouTubeId;
@@ -501,13 +528,13 @@ document.addEventListener("DOMContentLoaded", () => {
             outputVideoPlayer.classList.add("hidden");
             outputVideoPlayer.pause();
             youtubeEmbedPlayer.classList.remove("hidden");
-            youtubeEmbedPlayer.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&rel=0`;
+            // Mute YouTube native audio so ONLY the translated neural voice track is heard
+            youtubeEmbedPlayer.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&mute=1&rel=0`;
 
-            downloadBtn.href = `https://www.youtube.com/watch?v=${ytId}`;
-            downloadBtn.target = "_blank";
-            downloadBtn.removeAttribute("download");
-            const btnSpan = downloadBtn.querySelector("span");
-            if (btnSpan) btnSpan.textContent = "Watch Translated Video (YouTube)";
+            if (translatedAudioElement) {
+                translatedAudioElement.currentTime = 0;
+                translatedAudioElement.play().catch(() => {});
+            }
         } else if (window._uploadedVideoFile) {
             if (youtubeEmbedPlayer) {
                 youtubeEmbedPlayer.classList.add("hidden");
@@ -520,13 +547,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Set up audio track volume ducking for translated speech
             applyAudioTrackMode();
-
-            const baseName = window._uploadedVideoFile.name.replace(/\.[^/.]+$/, "");
-            downloadBtn.href = localBlobUrl;
-            downloadBtn.target = "_self";
-            downloadBtn.setAttribute("download", `${baseName}_translated_${job.target_language || 'ta'}.mp4`);
-            const btnSpan = downloadBtn.querySelector("span");
-            if (btnSpan) btnSpan.textContent = "Download Output Video (.MP4)";
         } else {
             if (youtubeEmbedPlayer) {
                 youtubeEmbedPlayer.classList.add("hidden");
@@ -545,12 +565,6 @@ document.addEventListener("DOMContentLoaded", () => {
             outputVideoPlayer.load();
 
             applyAudioTrackMode();
-
-            downloadBtn.href = `/api/download/${job.job_id}`;
-            downloadBtn.target = "_self";
-            downloadBtn.setAttribute("download", `translated_video_${job.target_language || 'output'}.mp4`);
-            const btnSpan = downloadBtn.querySelector("span");
-            if (btnSpan) btnSpan.textContent = "Download Output Video (.MP4)";
         }
 
         videoPlaceholder.classList.add("hidden");
@@ -568,11 +582,23 @@ document.addEventListener("DOMContentLoaded", () => {
         const isTranslatedTrack = trackTranslatedRadio ? trackTranslatedRadio.checked : true;
 
         if (isTranslatedTrack) {
-            // Duck original audio to near-zero so ONLY the translated voice is heard
-            outputVideoPlayer.volume = 0.05;
+            // Mute original video audio completely so ONLY the translated voice is heard
+            outputVideoPlayer.volume = 0;
+            outputVideoPlayer.muted = true;
+            if (translatedAudioElement) {
+                translatedAudioElement.volume = 1.0;
+                if (!outputVideoPlayer.paused) {
+                    translatedAudioElement.currentTime = outputVideoPlayer.currentTime;
+                    translatedAudioElement.play().catch(() => {});
+                }
+            }
         } else {
             // 100% original voice volume
             outputVideoPlayer.volume = 1.0;
+            outputVideoPlayer.muted = false;
+            if (translatedAudioElement) {
+                translatedAudioElement.pause();
+            }
             if (window.speechSynthesis) window.speechSynthesis.cancel();
             if (liveSubtitlesOverlay) liveSubtitlesOverlay.classList.add("hidden");
         }
@@ -584,14 +610,43 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Synchronize translated speech and subtitles with video playback time
+    outputVideoPlayer.addEventListener("play", () => {
+        applyAudioTrackMode();
+        const isTranslatedTrack = trackTranslatedRadio ? trackTranslatedRadio.checked : true;
+        if (isTranslatedTrack && translatedAudioElement) {
+            translatedAudioElement.currentTime = outputVideoPlayer.currentTime;
+            translatedAudioElement.play().catch(() => {});
+        }
+    });
+
+    outputVideoPlayer.addEventListener("pause", () => {
+        if (translatedAudioElement) translatedAudioElement.pause();
+        if (window.speechSynthesis) window.speechSynthesis.pause();
+    });
+
+    outputVideoPlayer.addEventListener("seeking", () => {
+        if (translatedAudioElement) {
+            translatedAudioElement.currentTime = outputVideoPlayer.currentTime;
+        }
+    });
+
+    outputVideoPlayer.addEventListener("seeked", () => {
+        if (translatedAudioElement) {
+            translatedAudioElement.currentTime = outputVideoPlayer.currentTime;
+        }
+    });
+
     outputVideoPlayer.addEventListener("timeupdate", () => {
         if (!currentCompletedJob || !currentCompletedJob.segments) return;
         const isTranslatedTrack = trackTranslatedRadio ? trackTranslatedRadio.checked : true;
         if (!isTranslatedTrack) return;
 
         const currentTime = outputVideoPlayer.currentTime;
-        const segments = currentCompletedJob.segments;
+        if (translatedAudioElement && Math.abs(translatedAudioElement.currentTime - currentTime) > 0.4) {
+            translatedAudioElement.currentTime = currentTime;
+        }
 
+        const segments = currentCompletedJob.segments;
         const activeSeg = segments.find(s => currentTime >= s.start_time && currentTime <= s.end_time);
 
         if (activeSeg) {
@@ -602,28 +657,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (activeSeg.segment_index !== activeSegmentIndex) {
                 activeSegmentIndex = activeSeg.segment_index;
-                speakTranslatedSentence(
-                    activeSeg.translated_text || activeSeg.original_text,
-                    currentCompletedJob.target_language || "ta",
-                    activeSeg.detected_gender || "FEMALE"
-                );
             }
         } else {
             if (liveSubtitlesOverlay) liveSubtitlesOverlay.classList.add("hidden");
         }
     });
 
-    outputVideoPlayer.addEventListener("pause", () => {
-        if (window.speechSynthesis) window.speechSynthesis.pause();
-    });
-
-    outputVideoPlayer.addEventListener("play", () => {
-        if (window.speechSynthesis && window.speechSynthesis.paused) {
-            window.speechSynthesis.resume();
-        }
-    });
-
     outputVideoPlayer.addEventListener("ended", () => {
+        if (translatedAudioElement) {
+            translatedAudioElement.pause();
+            translatedAudioElement.currentTime = 0;
+        }
         if (window.speechSynthesis) window.speechSynthesis.cancel();
         activeSegmentIndex = -1;
     });
