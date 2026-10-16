@@ -10,6 +10,8 @@ import asyncio
 import subprocess
 import logging
 import wave
+import struct
+import numpy as np
 from typing import List, Dict, Any, Optional
 from backend.config import SUPPORTED_LANGUAGES
 
@@ -22,7 +24,7 @@ class VoiceSynthesizer:
 
     def get_voice_for_speaker(self, lang_code: str, gender: str) -> str:
         """Select neural voice matching target language and detected gender."""
-        lang_config = SUPPORTED_LANGUAGES.get(lang_code, SUPPORTED_LANGUAGES["en"])
+        lang_config = SUPPORTED_LANGUAGES.get(lang_code, SUPPORTED_LANGUAGES.get("en", {}))
         if gender.upper() == "FEMALE":
             return lang_config.get("female_voice", "en-US-JennyNeural")
         else:
@@ -34,23 +36,64 @@ class VoiceSynthesizer:
         communicate = edge_tts.Communicate(text, voice)
         await communicate.save(output_path)
 
-    def synthesize_segment(self, text: str, voice_id: str, raw_output_path: str) -> bool:
-        """Synthesize speech audio for a text segment."""
-        os.makedirs(os.path.dirname(raw_output_path), exist_ok=True)
+    def synthesize_segment(self, text: str, voice_id: str, final_wav_path: str) -> bool:
+        """
+        Synthesize speech audio for a text segment.
+        Edge-TTS outputs MP3 stream, which is immediately converted to a standard 16kHz mono PCM WAV.
+        """
+        os.makedirs(os.path.dirname(final_wav_path), exist_ok=True)
+        raw_mp3_path = final_wav_path + ".mp3"
         try:
-            asyncio.run(self._generate_edge_tts(text, voice_id, raw_output_path))
-            return os.path.exists(raw_output_path) and os.path.getsize(raw_output_path) > 0
+            # 1. Generate MP3 with Edge-TTS
+            asyncio.run(self._generate_edge_tts(text, voice_id, raw_mp3_path))
+            
+            if not os.path.exists(raw_mp3_path) or os.path.getsize(raw_mp3_path) == 0:
+                return self._synthesize_fallback(text, final_wav_path)
+
+            # 2. Convert to standard 16kHz mono PCM WAV via FFmpeg
+            cmd = [
+                self.ffmpeg,
+                "-y",
+                "-i", raw_mp3_path,
+                "-acodec", "pcm_s16le",
+                "-ar", "16000",
+                "-ac", "1",
+                final_wav_path
+            ]
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return os.path.exists(final_wav_path) and os.path.getsize(final_wav_path) > 100
         except Exception as e:
-            logger.warning("edge-tts generation failed: %s. Using pyttsx3/espeak fallback.", e)
-            return self._synthesize_fallback(text, raw_output_path)
+            logger.warning("edge-tts generation failed: %s. Using fallback.", e)
+            return self._synthesize_fallback(text, final_wav_path)
+        finally:
+            if os.path.exists(raw_mp3_path):
+                try:
+                    os.remove(raw_mp3_path)
+                except Exception:
+                    pass
 
     def _synthesize_fallback(self, text: str, output_path: str) -> bool:
-        """Fallback offline TTS (pyttsx3 or eSpeak)."""
+        """Fallback offline TTS (pyttsx3) converted to 16kHz mono WAV."""
         try:
             import pyttsx3
             engine = pyttsx3.init()
-            engine.save_to_file(text, output_path)
+            temp_out = output_path + "_raw.wav"
+            engine.save_to_file(text, temp_out)
             engine.runAndWait()
+            
+            # Normalize to 16kHz mono
+            cmd = [
+                self.ffmpeg,
+                "-y",
+                "-i", temp_out,
+                "-acodec", "pcm_s16le",
+                "-ar", "16000",
+                "-ac", "1",
+                output_path
+            ]
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
             return os.path.exists(output_path)
         except Exception as e:
             logger.error("Fallback TTS also failed: %s", e)
@@ -67,8 +110,8 @@ class VoiceSynthesizer:
 
         speed_ratio = current_duration / target_duration
         
-        # Keep speed within reasonable, natural-sounding bounds (0.6x to 1.8x)
-        speed_ratio = max(0.65, min(1.75, speed_ratio))
+        # Keep speed within reasonable, natural-sounding bounds (0.7x to 1.6x)
+        speed_ratio = max(0.70, min(1.60, speed_ratio))
 
         # Build FFmpeg atempo filter string (atempo must be between 0.5 and 2.0)
         filter_str = f"atempo={speed_ratio:.4f}"
@@ -85,7 +128,9 @@ class VoiceSynthesizer:
         ]
         try:
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            return output_wav if os.path.exists(output_wav) else input_wav
+            if os.path.exists(output_wav) and os.path.getsize(output_wav) > 100:
+                return output_wav
+            return input_wav
         except Exception as e:
             logger.error("Failed to time-stretch audio segment: %s", e)
             return input_wav
@@ -121,14 +166,14 @@ class VoiceSynthesizer:
             raw_path = os.path.join(temp_dir, f"seg_{i:04d}_raw.wav")
             aligned_path = os.path.join(temp_dir, f"seg_{i:04d}_aligned.wav")
 
-            start_t = seg["start"]
-            end_t = seg["end"]
+            start_t = float(seg["start"])
+            end_t = float(seg["end"])
             target_dur = max(0.2, end_t - start_t)
 
             if self.synthesize_segment(text, voice_id, raw_path):
-                self.time_align_audio(raw_path, target_dur, aligned_path)
+                effective_file = self.time_align_audio(raw_path, target_dur, aligned_path)
                 segment_files.append({
-                    "path": aligned_path,
+                    "path": effective_file,
                     "start": start_t,
                     "end": end_t
                 })
@@ -138,50 +183,47 @@ class VoiceSynthesizer:
         return output_track_wav
 
     def _assemble_timeline(self, segments: List[Dict[str, Any]], total_duration: float, output_path: str):
-        """Mixes aligned segments at their exact timestamps with silence padding."""
-        if not segments:
-            # Generate silent wav of total duration
-            cmd = [
-                self.ffmpeg, "-y",
-                "-f", "lavfi", "-i", f"anullsrc=r=16000:cl=mono",
-                "-t", str(total_duration),
-                output_path
-            ]
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            return
+        """
+        Uses in-memory NumPy PCM frame placement to stitch all audio segments
+        at their exact millisecond timestamps without FFmpeg CLI argument limits or crashes.
+        """
+        total_duration = max(1.0, float(total_duration))
+        total_samples = int(total_duration * 16000)
+        timeline = np.zeros(total_samples, dtype=np.int16)
 
-        # Build FFmpeg complex filter with adelay and amix
-        inputs = []
-        filter_parts = []
+        for seg in segments:
+            path = seg["path"]
+            if not os.path.exists(path):
+                continue
 
-        # Base silence track
-        inputs.extend(["-f", "lavfi", "-t", str(total_duration), "-i", "anullsrc=r=16000:cl=mono"])
+            try:
+                with wave.open(path, "rb") as wf:
+                    n_frames = wf.getnframes()
+                    raw_bytes = wf.readframes(n_frames)
+                    seg_data = np.frombuffer(raw_bytes, dtype=np.int16)
 
-        for idx, seg in enumerate(segments):
-            inputs.extend(["-i", seg["path"]])
-            delay_ms = int(seg["start"] * 1000)
-            filter_parts.append(f"[{idx + 1}:a]adelay={delay_ms}|{delay_ms}[a{idx}];")
+                start_idx = int(seg["start"] * 16000)
+                if start_idx < total_samples:
+                    available = total_samples - start_idx
+                    take = min(len(seg_data), available)
+                    
+                    # Direct insert with clipping to avoid overflow
+                    slice_orig = timeline[start_idx : start_idx + take].astype(np.int32)
+                    slice_new = seg_data[:take].astype(np.int32)
+                    blended = np.clip(slice_orig + slice_new, -32768, 32767).astype(np.int16)
+                    timeline[start_idx : start_idx + take] = blended
+            except Exception as e:
+                logger.error("Failed to merge segment %s into timeline: %s", path, e)
 
-        mix_inputs = "".join([f"[a{i}]" for i in range(len(segments))])
-        filter_parts.append(f"[0:a]{mix_inputs}amix=inputs={len(segments) + 1}:duration=first:dropout_transition=0[outa]")
-
-        cmd = [self.ffmpeg, "-y"] + inputs + ["-filter_complex", "".join(filter_parts), "-map", "[outa]", output_path]
+        # Write pristine 16kHz mono PCM WAV
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with wave.open(output_path, "wb") as out_wf:
+            out_wf.setnchannels(1)
+            out_wf.setsampwidth(2)
+            out_wf.setframerate(16000)
+            out_wf.writeframes(timeline.tobytes())
         
-        try:
-            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        except Exception as e:
-            logger.error("Complex audio mix failed: %s. Falling back to sequential concatenation.", e)
-            self._simple_concat_timeline(segments, total_duration, output_path)
-
-    def _simple_concat_timeline(self, segments: List[Dict[str, Any]], total_duration: float, output_path: str):
-        """Fallback simpler concatenation."""
-        cmd = [
-            self.ffmpeg, "-y",
-            "-f", "lavfi", "-i", f"anullsrc=r=16000:cl=mono",
-            "-t", str(total_duration),
-            output_path
-        ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("Master audio timeline assembled successfully: %s (duration: %.2fs)", output_path, total_duration)
 
     def _get_wav_duration(self, wav_path: str) -> float:
         """Helper to get accurate duration from WAV header."""

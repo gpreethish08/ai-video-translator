@@ -32,18 +32,40 @@ class VideoAssembler:
             "-i", video_input,
             "-i", audio_input,
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "21",
+            "-preset", "veryfast",
+            "-crf", "22",
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "+faststart",
             "-map", "0:v:0",
             "-map", "1:a:0",
+            "-shortest",
             output_file
         ]
         logger.info("Assembling final video to: %s", output_file)
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        return output_file
+        try:
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return output_file
+        except subprocess.CalledProcessError as e:
+            err_msg = e.stderr.decode('utf-8', errors='ignore') if e.stderr else str(e)
+            logger.warning("Default encode failed (%s). Retrying with copy codec...", err_msg)
+            
+            fallback_cmd = [
+                self.ffmpeg,
+                "-y",
+                "-i", video_input,
+                "-i", audio_input,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-shortest",
+                output_file
+            ]
+            subprocess.run(fallback_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return output_file
 
     def concatenate_chunks(self, chunk_files: List[str], final_output: str) -> str:
         """Concatenates multiple video chunks into a single seamless output file."""
@@ -52,7 +74,6 @@ class VideoAssembler:
 
         with open(concat_list_file, "w", encoding="utf-8") as f:
             for chunk in chunk_files:
-                # FFmpeg concat file format requires forward slashes or escaped backslashes
                 safe_path = chunk.replace("\\", "/")
                 f.write(f"file '{safe_path}'\n")
 

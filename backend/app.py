@@ -90,9 +90,11 @@ async def translate_video_file(
     lip_sync_enabled: bool = Form(True),
     fast_parallel_mode: bool = Form(True)
 ):
-    """Handles direct video file upload (.mp4, .mkv, .mov, .webm) and initiates translation."""
     job_id = str(uuid.uuid4())
-    safe_filename = f"{job_id}_{video.filename}"
+    orig_name = video.filename or "uploaded_video.mp4"
+    ext = Path(orig_name).suffix or ".mp4"
+    clean_stem = "".join(c for c in Path(orig_name).stem if c.isalnum() or c in ("-", "_")).strip()[:40]
+    safe_filename = f"{job_id}_{clean_stem}{ext}" if clean_stem else f"{job_id}{ext}"
     saved_path = UPLOAD_DIR / safe_filename
 
     # Save uploaded file to disk

@@ -135,7 +135,7 @@ class TranslationOrchestrator:
                 gender_override=gender_override
             )
 
-            # Step 7: Lip-Sync Synchronization
+            # Step 7 & 8: Lip-Sync Synchronization & Final Assembly
             final_output_path = str(OUTPUT_DIR / f"{job_id}_translated.mp4")
             if lip_sync_enabled:
                 update_progress(88, "Synchronizing lip movement with translated speech (Wav2Lip)...")
@@ -143,17 +143,24 @@ class TranslationOrchestrator:
                 self.lip_syncer.synchronize_lips(
                     video_input_path, master_audio_path, synced_video, fast_mode=fast_parallel
                 )
-                render_source_video = synced_video if os.path.exists(synced_video) else video_input_path
+                if os.path.exists(synced_video) and os.path.getsize(synced_video) > 1000:
+                    update_progress(95, "Finalizing output video for streaming and download...")
+                    import shutil
+                    shutil.copyfile(synced_video, final_output_path)
+                else:
+                    update_progress(95, "Multiplexing final video stream for streaming and download...")
+                    self.assembler.assemble_final_video(
+                        video_input=video_input_path,
+                        audio_input=master_audio_path,
+                        output_file=final_output_path
+                    )
             else:
-                render_source_video = video_input_path
-
-            # Step 8: Final Video Assembly & Packaging
-            update_progress(95, "Multiplexing final video stream for streaming and download...")
-            self.assembler.assemble_final_video(
-                video_input=render_source_video,
-                audio_input=master_audio_path,
-                output_file=final_output_path
-            )
+                update_progress(95, "Multiplexing final video stream for streaming and download...")
+                self.assembler.assemble_final_video(
+                    video_input=video_input_path,
+                    audio_input=master_audio_path,
+                    output_file=final_output_path
+                )
 
             # Complete job in database
             db.complete_job(job_id, final_output_path, duration)

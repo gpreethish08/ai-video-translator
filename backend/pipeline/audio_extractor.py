@@ -30,15 +30,22 @@ class AudioVideoExtractor:
             video_path
         ]
         try:
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-            info = json.loads(result.stdout)
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            stdout_str = result.stdout.decode('utf-8', errors='ignore')
+            info = json.loads(stdout_str)
             
-            duration = float(info.get("format", {}).get("duration", 0.0))
+            format_dict = info.get("format", {})
+            duration = float(format_dict.get("duration", 0.0))
             video_streams = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
             audio_streams = [s for s in info.get("streams", []) if s.get("codec_type") == "audio"]
 
-            width = video_streams[0].get("width", 1280) if video_streams else 1280
-            height = video_streams[0].get("height", 720) if video_streams else 720
+            if duration <= 0.0 and video_streams:
+                duration = float(video_streams[0].get("duration", 0.0))
+            if duration <= 0.0 and audio_streams:
+                duration = float(audio_streams[0].get("duration", 0.0))
+
+            width = int(video_streams[0].get("width", 1280)) if video_streams else 1280
+            height = int(video_streams[0].get("height", 720)) if video_streams else 720
             fps_eval = video_streams[0].get("r_frame_rate", "30/1") if video_streams else "30/1"
             
             try:
@@ -57,7 +64,7 @@ class AudioVideoExtractor:
             }
         except Exception as e:
             logger.error("Failed to extract video metadata: %s", e)
-            return {"duration": 0.0, "width": 1280, "height": 720, "fps": 30.0, "has_audio": True, "size_bytes": 0}
+            return {"duration": 10.0, "width": 1280, "height": 720, "fps": 30.0, "has_audio": True, "size_bytes": 0}
 
     def extract_audio(self, video_path: str, output_wav_path: str, sample_rate: int = 16000) -> bool:
         """Extract high-fidelity 16kHz mono WAV audio track for transcription."""

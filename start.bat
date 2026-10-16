@@ -2,6 +2,10 @@
 :: Switch to the directory where start.bat is located
 cd /d "%~dp0"
 
+:: Ensure UTF-8 console output on Windows
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+
 echo ===================================================
 echo       Starting AI Video Translator Studio
 echo ===================================================
