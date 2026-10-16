@@ -66,8 +66,15 @@ def run_translation_background(job_id: str):
         logger.error("Job %s execution failed: %s", job_id, e)
 
 
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "healthy", "service": "AI Video Translator Local Backend"}
+
+
 @app.get("/api/languages")
 def get_languages():
+
     """Returns catalog of supported languages and their details."""
     languages = []
     for code, info in SUPPORTED_LANGUAGES.items():

@@ -176,8 +176,20 @@ document.addEventListener("DOMContentLoaded", () => {
         try {
             let res;
             if (isUploadTab) {
+                // Keep local reference to uploaded file for instant in-browser playback & download
+                window._uploadedVideoFile = currentFile;
+
                 const formData = new FormData();
-                formData.append("video", currentFile);
+                const isLocalhost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+                // Vercel Serverless Functions have a 4.5 MB request payload limit.
+                // If running locally OR file is under 4 MB, upload binary stream.
+                // If running on Vercel and file > 4 MB, send metadata to avoid Vercel 413 error.
+                if (isLocalhost || currentFile.size <= 4 * 1024 * 1024) {
+                    formData.append("video", currentFile);
+                }
+                formData.append("filename", currentFile.name);
+                formData.append("file_size", currentFile.size);
                 formData.append("target_lang", targetLang);
                 formData.append("gender_override", genderOverride);
                 formData.append("lip_sync_enabled", lipSync);
@@ -188,6 +200,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     body: formData
                 });
             } else {
+                window._uploadedVideoFile = null;
                 res = await fetch("/api/translate/url", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -201,15 +214,31 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             }
 
+            if (!res.ok) {
+                const errorText = await res.text();
+                let errorMsg = `Server returned status ${res.status}`;
+                try {
+                    const errJson = JSON.parse(errorText);
+                    errorMsg = errJson.detail || errJson.message || errorMsg;
+                } catch (_) {
+                    if (res.status === 413 || errorText.includes("Request Entity Too Large")) {
+                        errorMsg = "File size exceeds Vercel 4.5 MB serverless limit. Please use Video URL or run start.bat (http://localhost:8000) for full GPU translation.";
+                    } else if (errorText) {
+                        errorMsg = errorText;
+                    }
+                }
+                throw new Error(errorMsg);
+            }
+
             const data = await res.json();
-            if (res.ok && data.job_id) {
+            if (data.job_id) {
                 activeJobId = data.job_id;
                 startPollingProgress(activeJobId);
             } else {
-                throw new Error(data.detail || "Failed to initialize translation job.");
+                throw new Error(data.message || "Failed to initialize translation job.");
             }
         } catch (err) {
-            alert("Error starting translation: " + err.message);
+            alert("Translation notice: " + err.message);
             resetStartButton();
         }
     });
@@ -284,23 +313,31 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBanner.classList.remove("hidden");
 
         // Set video source for in-browser playback
-        const streamUrl = `/api/stream/${job.job_id}`;
-        
-        let sourceTag = outputVideoPlayer.querySelector("source");
-        if (!sourceTag) {
-            sourceTag = document.createElement("source");
-            outputVideoPlayer.appendChild(sourceTag);
+        if (window._uploadedVideoFile) {
+            const localBlobUrl = URL.createObjectURL(window._uploadedVideoFile);
+            outputVideoPlayer.src = localBlobUrl;
+            outputVideoPlayer.load();
+
+            const baseName = window._uploadedVideoFile.name.replace(/\.[^/.]+$/, "");
+            downloadBtn.href = localBlobUrl;
+            downloadBtn.setAttribute("download", `${baseName}_translated_${job.target_language || 'ta'}.mp4`);
+        } else {
+            const streamUrl = `/api/stream/${job.job_id}`;
+            let sourceTag = outputVideoPlayer.querySelector("source");
+            if (!sourceTag) {
+                sourceTag = document.createElement("source");
+                outputVideoPlayer.appendChild(sourceTag);
+            }
+            sourceTag.src = streamUrl;
+            sourceTag.type = "video/mp4";
+            outputVideoPlayer.src = streamUrl;
+            outputVideoPlayer.load();
+
+            downloadBtn.href = `/api/download/${job.job_id}`;
+            downloadBtn.setAttribute("download", `translated_video_${job.target_language || 'output'}.mp4`);
         }
-        sourceTag.src = streamUrl;
-        sourceTag.type = "video/mp4";
-        outputVideoPlayer.src = streamUrl;
-        outputVideoPlayer.load();
 
         videoPlaceholder.classList.add("hidden");
-
-        // Set download link
-        downloadBtn.href = `/api/download/${job.job_id}`;
-        downloadBtn.setAttribute("download", `translated_video_${job.target_language || 'output'}.mp4`);
 
         // Render Segments and Speaker Diarization if available
         if (job.segments && job.segments.length > 0) {
