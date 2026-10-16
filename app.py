@@ -53,9 +53,16 @@ class UrlTranslationRequest(BaseModel):
     fast_parallel_mode: Optional[bool] = True
 
 
+@app.get("/health")
+@app.get("/api/health")
+def health_check():
+    return {"status": "healthy", "service": "AI Video Translator API"}
+
+
 @app.get("/api/languages")
 def get_languages():
     return {"status": "success", "languages": SUPPORTED_LANGUAGES}
+
 
 
 @app.get("/api/jobs/latest")

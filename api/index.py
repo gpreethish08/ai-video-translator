@@ -3,7 +3,7 @@ Vercel Serverless Function Handler
 Exposes FastAPI API endpoints on Vercel Serverless Python Runtime.
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -52,12 +52,21 @@ class UrlTranslationRequest(BaseModel):
     fast_parallel_mode: Optional[bool] = True
 
 
-@app.get("/api/languages")
+router = APIRouter()
+
+
+@router.get("/")
+@router.get("/health")
+def health_check():
+    return {"status": "healthy", "service": "AI Video Translator API"}
+
+
+@router.get("/languages")
 def get_languages():
     return {"status": "success", "languages": SUPPORTED_LANGUAGES}
 
 
-@app.get("/api/jobs/latest")
+@router.get("/jobs/latest")
 def get_latest_job():
     if not jobs_store:
         return {"status": "none", "job": None}
@@ -65,7 +74,7 @@ def get_latest_job():
     return {"status": "success", "job": jobs_store[latest_id]}
 
 
-@app.get("/api/jobs/{job_id}")
+@router.get("/jobs/{job_id}")
 def get_job_status(job_id: str):
     if job_id in jobs_store:
         return jobs_store[job_id]
@@ -79,7 +88,7 @@ def get_job_status(job_id: str):
     }
 
 
-@app.post("/api/translate/file")
+@router.post("/translate/file")
 async def translate_video_file(
     video: UploadFile = File(...),
     target_lang: str = Form(...),
@@ -102,7 +111,7 @@ async def translate_video_file(
     return {"status": "success", "job_id": job_id, "message": "Translation request received"}
 
 
-@app.post("/api/translate/url")
+@router.post("/translate/url")
 def translate_video_url(payload: UrlTranslationRequest):
     job_id = str(uuid.uuid4())
     job_record = {
@@ -116,3 +125,8 @@ def translate_video_url(payload: UrlTranslationRequest):
     }
     jobs_store[job_id] = job_record
     return {"status": "success", "job_id": job_id, "message": "URL translation started"}
+
+
+# Mount router at both root and /api for seamless proxying
+app.include_router(router)
+app.include_router(router, prefix="/api")
