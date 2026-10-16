@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Video Translator | Multi-Language, Gender-Aware & Lip-Sync</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navigation -->
+        <header class="header">
+            <div class="logo-area">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                    </svg>
+                </div>
+                <div class="logo-text">
+                    <h1>AI Video Translator</h1>
+                    <span class="badge">40-Min Ultra Fast &bull; Lip-Sync &bull; Gender Voice Diarization</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <a href="https://github.com/gpreethish08/ai-video-translator" target="_blank" class="btn btn-outline github-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                    </svg>
+                    <span>GitHub Repo</span>
+                </a>
+            </div>
+        </header>
+
+        <!-- Main Studio Grid -->
+        <main class="studio-grid">
+            <!-- Left Panel: Input & Settings -->
+            <section class="card settings-card">
+                <div class="card-header">
+                    <h2>1. Choose Video Source</h2>
+                    <p class="card-desc">Upload any video file or paste a video link (supports up to 40 minutes)</p>
+                </div>
+
+                <!-- Input Tabs -->
+                <div class="tabs-container">
+                    <button class="tab-btn active" data-tab="upload-tab">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="17 8 12 3 7 8"></polyline>
+                            <line x1="12" y1="3" x2="12" y2="15"></line>
+                        </svg>
+                        Upload Video
+                    </button>
+                    <button class="tab-btn" data-tab="url-tab">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                        </svg>
+                        Video URL
+                    </button>
+                </div>
+
+                <!-- Tab 1: Upload File -->
+                <div id="upload-tab" class="tab-content active">
+                    <div class="dropzone" id="dropzone">
+                        <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/quicktime,video/webm" hidden>
+                        <div class="dropzone-content">
+                            <div class="upload-icon-circle">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+                                    <path d="M12 12v9"></path>
+                                    <path d="m16 16-4-4-4 4"></path>
+                                </svg>
+                            </div>
+                            <h3>Drag & Drop Video File</h3>
+                            <p>MP4, MOV, MKV, WebM up to 40 mins (2 GB)</p>
+                            <button type="button" class="btn btn-secondary" onclick="document.getElementById('video-file-input').click()">Browse Computer</button>
+                            <div id="selected-file-info" class="selected-file-info hidden">
+                                <span class="file-name" id="file-name-label"></span>
+                                <span class="file-size" id="file-size-label"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Video URL -->
+                <div id="url-tab" class="tab-content">
+                    <div class="url-input-group">
+                        <label for="video-url-input">Enter Public Video Link</label>
+                        <div class="input-with-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="2" y1="12" x2="22" y2="12"></line>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                            </svg>
+                            <input type="url" id="video-url-input" placeholder="https://www.youtube.com/watch?v=... or .mp4 link">
+                        </div>
+                        <span class="input-hint">Supports YouTube, Vimeo, Twitch clips, and direct HTTP/HTTPS video links.</span>
+                    </div>
+                </div>
+
+                <!-- Translation Configurations -->
+                <div class="config-section">
+                    <h3>2. Translation & Voice Settings</h3>
+                    
+                    <!-- Language Selection -->
+                    <div class="form-group">
+                        <label for="target-language-select">Target Language</label>
+                        <select id="target-language-select" class="form-select">
+                            <!-- Populated dynamically via API -->
+                            <option value="es">Spanish (Español)</option>
+                            <option value="hi">Hindi (हिन्दी)</option>
+                            <option value="fr">French (Français)</option>
+                            <option value="de">German (Deutsch)</option>
+                            <option value="ta">Tamil (தமிழ்)</option>
+                            <option value="te">Telugu (తెలుగు)</option>
+                            <option value="ja">Japanese (日本語)</option>
+                            <option value="zh">Chinese (Mandarin)</option>
+                            <option value="ar">Arabic (العربية)</option>
+                            <option value="ru">Russian (Русский)</option>
+                            <option value="pt">Portuguese (Português)</option>
+                            <option value="it">Italian (Italiano)</option>
+                            <option value="ko">Korean (한국어)</option>
+                        </select>
+                    </div>
+
+                    <!-- Voice Diarization & Gender Selection -->
+                    <div class="form-group">
+                        <label for="gender-mode-select">Speaker Voice & Gender</label>
+                        <select id="gender-mode-select" class="form-select">
+                            <option value="auto">✨ Auto-Detect Male / Female Voice (Recommended)</option>
+                            <option value="male">Force Male Neural Voice</option>
+                            <option value="female">Force Female Neural Voice</option>
+                        </select>
+                        <span class="input-hint">Identifies pitch (F0) & harmonics to assign authentic male/female voice actors.</span>
+                    </div>
+
+                    <!-- AI Lip-Sync & Parallel Checkboxes -->
+                    <div class="toggles-grid">
+                        <label class="toggle-card">
+                            <input type="checkbox" id="lip-sync-toggle" checked>
+                            <div class="toggle-indicator"></div>
+                            <div class="toggle-details">
+                                <span class="toggle-title">AI Lip Movement Synchronization</span>
+                                <span class="toggle-desc">Wav2Lip deep neural model synchronizes mouth movements to translated speech.</span>
+                            </div>
+                        </label>
+
+                        <label class="toggle-card">
+                            <input type="checkbox" id="fast-mode-toggle" checked>
+                            <div class="toggle-indicator"></div>
+                            <div class="toggle-details">
+                                <span class="toggle-title">Fast 40-Min Parallel Mode</span>
+                                <span class="toggle-desc">Segments long videos to accelerate processing time exponentially.</span>
+                            </div>
+                        </label>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button id="start-translation-btn" class="btn btn-primary btn-large">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        <span>Start AI Translation & Lip-Sync</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Right Panel: Processing Status & Video Output -->
+            <section class="card output-card">
+                <div class="card-header">
+                    <h2>3. Processing & Video Output</h2>
+                    <p class="card-desc">Live pipeline tracking, preview studio, and direct output download</p>
+                </div>
+
+                <!-- Progress / Status Tracker -->
+                <div id="progress-container" class="progress-box hidden">
+                    <div class="progress-header">
+                        <div class="status-indicator-badge">
+                            <span class="pulsing-dot"></span>
+                            <span id="current-step-label">Processing Pipeline...</span>
+                        </div>
+                        <span class="progress-percent" id="progress-percent-label">0%</span>
+                    </div>
+
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%"></div>
+                    </div>
+
+                    <!-- 8 Pipeline Steps -->
+                    <div class="pipeline-stepper">
+                        <div class="step-node" id="step-1"><span>1</span><label>Source Video</label></div>
+                        <div class="step-node" id="step-2"><span>2</span><label>Audio Extraction</label></div>
+                        <div class="step-node" id="step-3"><span>3</span><label>Whisper STT</label></div>
+                        <div class="step-node" id="step-4"><span>4</span><label>Gender Voice</label></div>
+                        <div class="step-node" id="step-5"><span>5</span><label>Translation</label></div>
+                        <div class="step-node" id="step-6"><span>6</span><label>Neural TTS</label></div>
+                        <div class="step-node" id="step-7"><span>7</span><label>Lip-Sync</label></div>
+                        <div class="step-node" id="step-8"><span>8</span><label>Final Export</label></div>
+                    </div>
+                </div>
+
+                <!-- Video Players Container -->
+                <div id="video-preview-area" class="video-preview-area">
+                    <div class="player-wrapper">
+                        <div class="player-header">
+                            <span class="player-tag" id="player-title">Output Video Preview</span>
+                            <span class="status-pill ready hidden" id="ready-pill">Ready to Download</span>
+                        </div>
+                        <div class="video-container">
+                            <video id="output-video-player" controls preload="metadata">
+                                <source src="" type="video/mp4">
+                                Your browser does not support the video tag.
+                            </video>
+                            <div class="video-placeholder" id="video-placeholder">
+                                <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                                </svg>
+                                <h4>No Video Translated Yet</h4>
+                                <p>Upload a video or enter a URL on the left and click "Start AI Translation".</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Direct Download Action Button -->
+                    <div class="download-banner hidden" id="download-banner">
+                        <div class="download-info">
+                            <div class="check-icon">✓</div>
+                            <div>
+                                <h4>Translation & Lip-Sync Ready!</h4>
+                                <p>Full video translated with matched voice and lip movements.</p>
+                            </div>
+                        </div>
+                        <a id="download-video-btn" href="#" class="btn btn-success btn-large">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span>Download Output Video (.MP4)</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Transcript & Speaker Log -->
+                <div class="transcription-log-card hidden" id="transcription-log-card">
+                    <div class="log-header">
+                        <h4>Speaker Diarization & Translation Log</h4>
+                        <span class="badge" id="segment-count-badge">0 Segments</span>
+                    </div>
+                    <div class="log-list" id="transcription-log-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>AI Video Translator &bull; Built with Python, HTML5, CSS3, JavaScript & Java Database Architecture &bull; <a href="https://github.com/gpreethish08/ai-video-translator" target="_blank">GitHub Repository</a></p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
