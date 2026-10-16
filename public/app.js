@@ -330,8 +330,12 @@ document.addEventListener("DOMContentLoaded", () => {
             const AudioCtx = window.AudioContext || window.webkitAudioContext;
             if (!AudioCtx) return null;
             const ctx = new AudioCtx();
-            const slice = file.slice(0, 12 * 1024 * 1024);
-            const arrayBuf = await slice.arrayBuffer();
+            let arrayBuf;
+            if (file.size <= 35 * 1024 * 1024) {
+                arrayBuf = await file.arrayBuffer();
+            } else {
+                arrayBuf = await file.slice(0, 25 * 1024 * 1024).arrayBuffer();
+            }
             const decoded = await ctx.decodeAudioData(arrayBuf);
             const duration = Math.min(decoded.duration, 25.0);
             const offlineCtx = new OfflineAudioContext(1, Math.floor(duration * 16000), 16000);
@@ -414,7 +418,11 @@ document.addEventListener("DOMContentLoaded", () => {
             if (isUploadTab) {
                 window._uploadedVideoFile = currentFile;
                 const formData = new FormData();
-                formData.append("video", currentFile);
+                // Send raw video file only if <= 3.5 MB to bypass Vercel serverless 4.5 MB payload limit.
+                // The browser retains window._uploadedVideoFile locally to stream and play the video seamlessly.
+                if (currentFile.size <= 3.5 * 1024 * 1024) {
+                    formData.append("video", currentFile);
+                }
                 formData.append("filename", currentFile.name);
                 formData.append("file_size", currentFile.size);
                 formData.append("target_lang", targetLang);

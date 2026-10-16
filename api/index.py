@@ -633,6 +633,11 @@ async def translate_video_file(
             sample_bytes = await audio_sample.read()
         except Exception:
             pass
+    elif video:
+        try:
+            sample_bytes = await video.read()
+        except Exception:
+            pass
 
     job_record = {
         "job_id": job_id,
