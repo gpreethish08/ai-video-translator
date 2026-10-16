@@ -164,7 +164,9 @@ class TranslationOrchestrator:
 
             # Complete job in database
             db.complete_job(job_id, final_output_path, duration)
-            update_progress(100, "Translation completed successfully! Video ready for download.")
+            logger.info("[Job %s] 100%% - Translation completed successfully! Output: %s", job_id, final_output_path)
+            if progress_callback:
+                progress_callback(100, "Translation completed successfully! Video ready for download.")
 
             return {
                 "job_id": job_id,

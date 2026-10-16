@@ -1,6 +1,6 @@
 /**
  * AI Video Translator - Frontend Application Logic
- * Connects UI with FastAPI backend for translation, diarization, and downloads.
+ * Connects UI with FastAPI backend for translation, diarization, preview streaming, and downloads.
  */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -49,7 +49,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             btn.classList.add("active");
             const target = btn.getAttribute("data-tab");
-            document.getElementById(target).classList.add("active");
+            const targetEl = document.getElementById(target);
+            if (targetEl) targetEl.classList.add("active");
         });
     });
 
@@ -109,7 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
                         opt.textContent = `${l.name} (${l.code.toUpperCase()})`;
                         targetLangSelect.appendChild(opt);
                     });
-                    targetLangSelect.value = "es"; // Default to Spanish
+                    targetLangSelect.value = "ta"; // Tamil or user default
                 }
             }
         } catch (e) {
@@ -118,7 +119,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     fetchLanguages();
 
-    // 4. Start Translation Trigger
+    // 4. Check for existing or latest completed job on page load
+    async function checkLatestJob() {
+        try {
+            const res = await fetch("/api/jobs/latest");
+            if (res.ok) {
+                const data = await res.json();
+                if (data.status === "success" && data.job) {
+                    const job = data.job;
+                    if (job.status === "COMPLETED" || (job.output_available && job.progress === 100)) {
+                        console.log("Found existing completed job:", job.job_id);
+                        onJobCompleted(job);
+                    } else if (job.status === "PROCESSING") {
+                        console.log("Found active job in progress:", job.job_id);
+                        progressContainer.classList.remove("hidden");
+                        startPollingProgress(job.job_id);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn("Could not check latest job:", err);
+        }
+    }
+    checkLatestJob();
+
+    // 5. Start Translation Trigger
     startBtn.addEventListener("click", async () => {
         const isUploadTab = document.getElementById("upload-tab").classList.contains("active");
         const targetLang = targetLangSelect.value;
@@ -189,7 +214,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // 5. Poll Job Progress
+    // 6. Poll Job Progress
     function startPollingProgress(jobId) {
         if (pollingInterval) clearInterval(pollingInterval);
 
@@ -201,7 +226,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 const job = await res.json();
                 updateProgressUI(job.progress, job.current_step);
 
-                if (job.status === "COMPLETED") {
+                // Check completion: either status is COMPLETED or output is ready
+                if (job.status === "COMPLETED" || (job.output_available && job.progress >= 95) || (job.progress === 100 && job.output_available)) {
                     clearInterval(pollingInterval);
                     onJobCompleted(job);
                 } else if (job.status === "FAILED") {
@@ -212,11 +238,12 @@ document.addEventListener("DOMContentLoaded", () => {
             } catch (err) {
                 console.error("Polling error:", err);
             }
-        }, 1500);
+        }, 1200);
     }
 
-    // 6. Update Progress and Step Indicators
+    // 7. Update Progress and Step Indicators
     function updateProgressUI(pct, stepDesc) {
+        progressContainer.classList.remove("hidden");
         progressFill.style.width = `${pct}%`;
         progressPercentLabel.textContent = `${pct}%`;
         currentStepLabel.textContent = stepDesc || "Working...";
@@ -239,21 +266,41 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    // 7. On Translation Completion
+    // 8. On Translation Completion
     function onJobCompleted(job) {
         resetStartButton();
+        updateProgressUI(100, "Translation completed successfully! Video ready for download.");
+
+        // Mark all steps as complete
+        for (let i = 1; i <= 8; i++) {
+            const node = document.getElementById(`step-${i}`);
+            if (node) {
+                node.classList.add("completed");
+                node.classList.remove("active");
+            }
+        }
+
         readyPill.classList.remove("hidden");
         downloadBanner.classList.remove("hidden");
 
-        // Set video source for preview
+        // Set video source for in-browser playback
         const streamUrl = `/api/stream/${job.job_id}`;
+        
+        let sourceTag = outputVideoPlayer.querySelector("source");
+        if (!sourceTag) {
+            sourceTag = document.createElement("source");
+            outputVideoPlayer.appendChild(sourceTag);
+        }
+        sourceTag.src = streamUrl;
+        sourceTag.type = "video/mp4";
         outputVideoPlayer.src = streamUrl;
         outputVideoPlayer.load();
+
         videoPlaceholder.classList.add("hidden");
 
         // Set download link
         downloadBtn.href = `/api/download/${job.job_id}`;
-        downloadBtn.setAttribute("download", `translated_video_${job.target_language}.mp4`);
+        downloadBtn.setAttribute("download", `translated_video_${job.target_language || 'output'}.mp4`);
 
         // Render Segments and Speaker Diarization if available
         if (job.segments && job.segments.length > 0) {
@@ -272,13 +319,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
             const gender = (seg.detected_gender || "MALE").toUpperCase();
             const genderClass = gender === "FEMALE" ? "female" : "male";
+            const startT = (seg.start_time !== undefined ? seg.start_time : seg.start || 0).toFixed(1);
+            const endT = (seg.end_time !== undefined ? seg.end_time : seg.end || 0).toFixed(1);
+            const pitch = (seg.pitch_mean_hz || 120).toFixed(0);
 
             item.innerHTML = `
                 <div class="log-item-top">
-                    <span>Segment #${i + 1} (${seg.start_time.toFixed(1)}s - ${seg.end_time.toFixed(1)}s)</span>
-                    <span class="gender-badge ${genderClass}">${gender} VOICE (${seg.pitch_mean_hz.toFixed(0)} Hz)</span>
+                    <span>Segment #${i + 1} (${startT}s - ${endT}s)</span>
+                    <span class="gender-badge ${genderClass}">${gender} VOICE (${pitch} Hz)</span>
                 </div>
-                <div class="log-orig"><strong>Original:</strong> ${escapeHtml(seg.original_text)}</div>
+                <div class="log-orig"><strong>Original:</strong> ${escapeHtml(seg.original_text || seg.text || '')}</div>
                 <div class="log-trans"><strong>Translated:</strong> ${escapeHtml(seg.translated_text || '')}</div>
             `;
             logList.appendChild(item);

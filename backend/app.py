@@ -182,6 +182,29 @@ def get_job_status(job_id: str):
     }
 
 
+@app.get("/api/jobs/latest")
+def get_latest_job():
+    """Returns the most recent translation job."""
+    jobs = db.list_jobs(limit=1)
+    if not jobs:
+        return {"status": "none", "job": None}
+    job = jobs[0]
+    segments = db.get_speaker_segments(job["id"])
+    return {
+        "status": "success",
+        "job": {
+            "job_id": job["id"],
+            "status": job["status"],
+            "progress": job["progress_percentage"],
+            "current_step": job["current_step"],
+            "target_language": job["target_language"],
+            "completed_at": job["completed_at"],
+            "output_available": bool(job["output_video_path"] and os.path.exists(job["output_video_path"])),
+            "segments": segments
+        }
+    }
+
+
 @app.get("/api/download/{job_id}")
 def download_translated_video(job_id: str):
     """Download the completed translated MP4 video."""
