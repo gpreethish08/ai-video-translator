@@ -161,27 +161,6 @@ def translate_video_url(
     }
 
 
-@app.get("/api/jobs/{job_id}")
-def get_job_status(job_id: str):
-    """Poll job progress, status, and speaker segments."""
-    job = db.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    segments = db.get_speaker_segments(job_id)
-    return {
-        "job_id": job["id"],
-        "status": job["status"],
-        "progress": job["progress_percentage"],
-        "current_step": job["current_step"],
-        "error_message": job["error_message"],
-        "target_language": job["target_language"],
-        "completed_at": job["completed_at"],
-        "output_available": bool(job["output_video_path"] and os.path.exists(job["output_video_path"])),
-        "segments": segments
-    }
-
-
 @app.get("/api/jobs/latest")
 def get_latest_job():
     """Returns the most recent translation job."""
@@ -202,6 +181,27 @@ def get_latest_job():
             "output_available": bool(job["output_video_path"] and os.path.exists(job["output_video_path"])),
             "segments": segments
         }
+    }
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job_status(job_id: str):
+    """Poll job progress, status, and speaker segments."""
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    segments = db.get_speaker_segments(job_id)
+    return {
+        "job_id": job["id"],
+        "status": job["status"],
+        "progress": job["progress_percentage"],
+        "current_step": job["current_step"],
+        "error_message": job["error_message"],
+        "target_language": job["target_language"],
+        "completed_at": job["completed_at"],
+        "output_available": bool(job["output_video_path"] and os.path.exists(job["output_video_path"])),
+        "segments": segments
     }
 
 
