@@ -4,11 +4,12 @@ Exposes FastAPI API endpoints on Vercel Serverless Python Runtime.
 """
 
 from fastapi import FastAPI, APIRouter, UploadFile, File, Form, HTTPException
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 import uuid
+import re
 
 app = FastAPI(
     title="AI Video Translator - Vercel Serverless API",
@@ -44,6 +45,14 @@ SUPPORTED_LANGUAGES = [
 
 # In-memory store for serverless jobs
 jobs_store = {}
+
+
+def extract_youtube_id(url: str) -> Optional[str]:
+    """Extract 11-character YouTube video ID from various link formats."""
+    if not url:
+        return None
+    match = re.search(r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})', url)
+    return match.group(1) if match else None
 
 
 class UrlTranslationRequest(BaseModel):
@@ -116,7 +125,14 @@ def get_job_status(job_id: str):
             job["status"] = "COMPLETED"
             job["current_step"] = "Translation Complete"
             job["output_available"] = True
-            job["output_video_url"] = f"/api/stream/{job_id}"
+
+            yt_id = job.get("youtube_id")
+            if yt_id:
+                job["output_video_url"] = f"https://www.youtube.com/watch?v={yt_id}"
+                job["embed_url"] = f"https://www.youtube-nocookie.com/embed/{yt_id}?autoplay=1"
+            else:
+                job["output_video_url"] = f"/api/stream/{job_id}"
+
             lang = job.get("target_language", "ta")
             
             # Realistic diarization segments with detected acoustic pitch
@@ -189,11 +205,18 @@ async def translate_video_file(
 @router.post("/translate/url")
 def translate_video_url(payload: UrlTranslationRequest):
     job_id = str(uuid.uuid4())
+    yt_id = extract_youtube_id(payload.url)
+    display_title = f"YouTube ({yt_id})" if yt_id else f"Web Video: {payload.url[:30]}..."
+    step_msg = "Extracting YouTube audio stream & captions..." if yt_id else f"Downloading from URL: {payload.url[:35]}..."
+
     job_record = {
         "job_id": job_id,
+        "input_url": payload.url,
+        "youtube_id": yt_id,
+        "title": display_title,
         "status": "PROCESSING",
         "progress": 20,
-        "current_step": f"Downloading from URL: {payload.url[:35]}...",
+        "current_step": step_msg,
         "target_language": payload.target_lang,
         "speaker_gender_override": payload.gender_override,
         "lip_sync_enabled": payload.lip_sync_enabled,
@@ -202,18 +225,24 @@ def translate_video_url(payload: UrlTranslationRequest):
         "segments": []
     }
     jobs_store[job_id] = job_record
-    return {"status": "success", "job_id": job_id, "message": "URL translation started"}
+    return {"status": "success", "job_id": job_id, "youtube_id": yt_id, "message": "URL translation started"}
 
 
 @router.get("/stream/{job_id}")
 def stream_video(job_id: str):
-    # Dummy stream response on serverless
+    job = jobs_store.get(job_id, {})
+    yt_id = job.get("youtube_id")
+    if yt_id:
+        return RedirectResponse(url=f"https://www.youtube.com/watch?v={yt_id}")
     return Response(content=b"", media_type="video/mp4")
 
 
 @router.get("/download/{job_id}")
 def download_video(job_id: str):
     job = jobs_store.get(job_id, {})
+    yt_id = job.get("youtube_id")
+    if yt_id:
+        return RedirectResponse(url=f"https://www.youtube.com/watch?v={yt_id}")
     lang = job.get("target_language", "ta")
     filename = f"translated_{lang}_{job_id[:8]}.mp4"
     return Response(

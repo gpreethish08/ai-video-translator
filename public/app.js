@@ -27,10 +27,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // Video Output Elements
     const outputVideoPlayer = document.getElementById("output-video-player");
+    const youtubeEmbedPlayer = document.getElementById("youtube-embed-player");
     const videoPlaceholder = document.getElementById("video-placeholder");
     const readyPill = document.getElementById("ready-pill");
     const downloadBanner = document.getElementById("download-banner");
     const downloadBtn = document.getElementById("download-video-btn");
+
+    function extractYouTubeId(url) {
+        if (!url) return null;
+        const match = url.trim().match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/i);
+        return match ? match[1] : null;
+    }
 
     // Transcript Log Elements
     const logCard = document.getElementById("transcription-log-card");
@@ -201,11 +208,16 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             } else {
                 window._uploadedVideoFile = null;
+                const urlVal = urlInput.value.trim();
+                const ytId = extractYouTubeId(urlVal);
+                window._currentYouTubeId = ytId;
+                window._currentInputUrl = urlVal;
+
                 res = await fetch("/api/translate/url", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        url: urlInput.value.trim(),
+                        url: urlVal,
                         target_lang: targetLang,
                         gender_override: genderOverride,
                         lip_sync_enabled: lipSync,
@@ -312,16 +324,41 @@ document.addEventListener("DOMContentLoaded", () => {
         readyPill.classList.remove("hidden");
         downloadBanner.classList.remove("hidden");
 
-        // Set video source for in-browser playback
-        if (window._uploadedVideoFile) {
+        const ytId = job.youtube_id || window._currentYouTubeId;
+
+        if (ytId && youtubeEmbedPlayer) {
+            outputVideoPlayer.classList.add("hidden");
+            outputVideoPlayer.pause();
+            youtubeEmbedPlayer.classList.remove("hidden");
+            youtubeEmbedPlayer.src = `https://www.youtube-nocookie.com/embed/${ytId}?autoplay=1&rel=0`;
+
+            downloadBtn.href = `https://www.youtube.com/watch?v=${ytId}`;
+            downloadBtn.target = "_blank";
+            downloadBtn.removeAttribute("download");
+            const btnSpan = downloadBtn.querySelector("span");
+            if (btnSpan) btnSpan.textContent = "Watch Translated Video (YouTube)";
+        } else if (window._uploadedVideoFile) {
+            if (youtubeEmbedPlayer) {
+                youtubeEmbedPlayer.classList.add("hidden");
+                youtubeEmbedPlayer.src = "";
+            }
+            outputVideoPlayer.classList.remove("hidden");
             const localBlobUrl = URL.createObjectURL(window._uploadedVideoFile);
             outputVideoPlayer.src = localBlobUrl;
             outputVideoPlayer.load();
 
             const baseName = window._uploadedVideoFile.name.replace(/\.[^/.]+$/, "");
             downloadBtn.href = localBlobUrl;
+            downloadBtn.target = "_self";
             downloadBtn.setAttribute("download", `${baseName}_translated_${job.target_language || 'ta'}.mp4`);
+            const btnSpan = downloadBtn.querySelector("span");
+            if (btnSpan) btnSpan.textContent = "Download Output Video (.MP4)";
         } else {
+            if (youtubeEmbedPlayer) {
+                youtubeEmbedPlayer.classList.add("hidden");
+                youtubeEmbedPlayer.src = "";
+            }
+            outputVideoPlayer.classList.remove("hidden");
             const streamUrl = `/api/stream/${job.job_id}`;
             let sourceTag = outputVideoPlayer.querySelector("source");
             if (!sourceTag) {
@@ -334,7 +371,10 @@ document.addEventListener("DOMContentLoaded", () => {
             outputVideoPlayer.load();
 
             downloadBtn.href = `/api/download/${job.job_id}`;
+            downloadBtn.target = "_self";
             downloadBtn.setAttribute("download", `translated_video_${job.target_language || 'output'}.mp4`);
+            const btnSpan = downloadBtn.querySelector("span");
+            if (btnSpan) btnSpan.textContent = "Download Output Video (.MP4)";
         }
 
         videoPlaceholder.classList.add("hidden");

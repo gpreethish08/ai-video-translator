@@ -92,12 +92,25 @@ class AudioVideoExtractor:
         os.makedirs(output_folder, exist_ok=True)
         output_template = os.path.join(output_folder, f"{job_id}_raw.%(ext)s")
         
-        # Check if yt-dlp is installed, otherwise fallback to python module or curl
-        cmd = [
-            "yt-dlp",
+        # Locate reliable yt-dlp executable
+        import shutil, sys
+        ytdlp_bin = None
+        for candidate_bin in [
+            shutil.which("yt-dlp"),
+            r"C:\Users\DELL\AppData\Local\Programs\Python\Python311\Scripts\yt-dlp.exe",
+        ]:
+            if candidate_bin and os.path.exists(candidate_bin):
+                ytdlp_bin = [candidate_bin]
+                break
+        if not ytdlp_bin:
+            ytdlp_bin = ["py", "-3.11", "-m", "yt_dlp"]
+
+        cmd = ytdlp_bin + [
             "--format", "mp4/best[ext=mp4]/best",
             "--output", output_template,
             "--no-playlist",
+            "--no-warnings",
+            "--js-runtimes", "node",
             "--max-filesize", "1500M",
             url
         ]
