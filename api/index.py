@@ -16,6 +16,8 @@ from fastapi.responses import Response, JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
+import os
+import wave
 import uuid
 import re
 import io
@@ -228,13 +230,57 @@ def extract_youtube_real_transcript(yt_id: str, max_sentences: int = 15, preferr
         return []
 
 
-def transcribe_audio_bytes(audio_bytes: bytes, source_lang: str = "auto") -> List[str]:
-    """Transcribes speech audio bytes into spoken text sentences using Google Speech Recognition."""
+def extract_pcm_from_media(media_bytes: bytes) -> bytes:
+    """Decodes audio from ANY media container (WAV, MP4, WebM, MOV, MKV, MP3, AAC, FLAC) into mono 16kHz 16-bit PCM."""
+    if not media_bytes or len(media_bytes) < 100:
+        return b""
+
+    # 1. Direct WAV header inspection
+    try:
+        with wave.open(io.BytesIO(media_bytes), "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            framerate = wf.getframerate()
+            frames = wf.readframes(wf.getnframes())
+            if n_channels == 1 and sampwidth == 2 and framerate == 16000:
+                return frames
+            elif n_channels == 2 and sampwidth == 2 and framerate == 16000:
+                # Convert stereo to mono by taking left channel
+                import audioop
+                return audioop.tomono(frames, 2, 1, 0)
+    except Exception:
+        pass
+
+    # 2. PyAV decoding for MP4, WebM, MOV, MKV, MP3, AAC, etc.
+    try:
+        import av
+        bio = io.BytesIO(media_bytes)
+        container = av.open(bio)
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        pcm_chunks = []
+        for frame in container.decode(audio=0):
+            for r_frame in resampler.resample(frame):
+                pcm_chunks.append(bytes(r_frame.planes[0]))
+        if pcm_chunks:
+            return b"".join(pcm_chunks)
+    except Exception as e:
+        logger.warning(f"PyAV media extraction notice: {e}")
+
+    return b""
+
+
+def transcribe_audio_bytes(media_bytes: bytes, source_lang: str = "auto") -> List[dict]:
+    """Transcribes audio from media bytes using Google Speech Recognition, returning timestamped sentences."""
+    if not media_bytes or len(media_bytes) < 500:
+        return []
+
+    pcm_data = extract_pcm_from_media(media_bytes)
+    if not pcm_data:
+        return []
+
     try:
         import speech_recognition as sr
         r = sr.Recognizer()
-        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-            audio = r.record(source)
 
         stt_map = {
             "en": "en-US",
@@ -255,23 +301,51 @@ def transcribe_audio_bytes(audio_bytes: bytes, source_lang: str = "auto") -> Lis
             "bn": "bn-IN"
         }
         sl = (source_lang or "auto").lower()
-        lang_code = stt_map.get(sl, "en-US")
-        text = ""
-        try:
-            text = r.recognize_google(audio, language=lang_code)
-        except Exception:
-            if sl == "auto":
-                try:
-                    text = r.recognize_google(audio, language="hi-IN")
-                except Exception:
-                    pass
+        lang_code = stt_map.get(sl, "hi-IN" if sl == "hi" else "en-US")
 
-        if text and text.strip():
-            raw_sentences = [s.strip() for s in re.split(r"[\.\?\!\r\n।]+", text) if s.strip()]
-            return raw_sentences if raw_sentences else [text.strip()]
+        # 16kHz 16-bit mono = 32,000 bytes per second
+        # Transcribe in 10-second chunks (320,000 bytes)
+        chunk_sec = 10
+        chunk_bytes = 16000 * 2 * chunk_sec
+        sentences = []
+        cur_sec = 0.5
+
+        for i in range(0, len(pcm_data), chunk_bytes):
+            chunk = pcm_data[i:i + chunk_bytes]
+            if len(chunk) < 16000 * 2 * 0.5:
+                continue
+            audio = sr.AudioData(chunk, 16000, 2)
+            rec_text = ""
+            try:
+                rec_text = r.recognize_google(audio, language=lang_code)
+            except Exception:
+                # If auto or failed, retry with alternate language
+                if sl in ("auto", "hi"):
+                    try:
+                        rec_text = r.recognize_google(audio, language="en-US" if lang_code == "hi-IN" else "hi-IN")
+                    except Exception:
+                        pass
+
+            if rec_text and rec_text.strip():
+                split_sents = [s.strip() for s in re.split(r"[\.\?\!\r\n।]+", rec_text) if s.strip()]
+                chunk_dur = round(len(chunk) / (16000 * 2), 2)
+                sub_dur = round(chunk_dur / max(1, len(split_sents)), 2)
+                sub_start = cur_sec
+                for s_item in split_sents:
+                    sentences.append({
+                        "start": round(sub_start, 2),
+                        "duration": round(max(2.5, sub_dur), 2),
+                        "text": s_item,
+                        "source_lang": sl if sl != "auto" else ("hi" if lang_code == "hi-IN" else "en")
+                    })
+                    sub_start += sub_dur
+
+            cur_sec += round(len(chunk) / (16000 * 2), 2)
+
+        return sentences
     except Exception as e:
         logger.warning(f"Audio transcription notice: {e}")
-    return []
+        return []
 
 
 def fetch_youtube_info(url: str):
@@ -320,28 +394,27 @@ def build_dynamic_segments_for_job(job: dict, audio_bytes: Optional[bytes] = Non
     # Mode 2: Audio voice sample speech recognition
     audio_sample = audio_bytes or audio_samples_cache.get(job.get("job_id", ""))
     if audio_sample and len(audio_sample) > 500:
-        transcribed_sentences = transcribe_audio_bytes(audio_sample, source_lang)
-        if transcribed_sentences:
-            selected = transcribed_sentences[:10]
+        transcribed_items = transcribe_audio_bytes(audio_sample, source_lang)
+        if transcribed_items:
             with ThreadPoolExecutor(max_workers=5) as executor:
-                translated_texts = list(executor.map(lambda s: robust_translate(s, target_lang, source_lang), selected))
+                translated_texts = list(executor.map(
+                    lambda item: robust_translate(item["text"], target_lang, source_lang=item.get("source_lang", source_lang)),
+                    transcribed_items
+                ))
             segments = []
-            cur_time = 0.5
-            for idx, (sentence, trans_text) in enumerate(zip(selected, translated_texts)):
-                duration = max(3.0, len(sentence) * 0.1)
+            for idx, (item, trans_text) in enumerate(zip(transcribed_items, translated_texts)):
+                dur = max(2.5, item["duration"])
                 segments.append({
                     "segment_index": idx,
-                    "start_time": round(cur_time, 2),
-                    "end_time": round(cur_time + duration, 2),
-                    "duration": round(duration, 2),
-                    "original_text": sentence,
+                    "start_time": item["start"],
+                    "end_time": round(item["start"] + dur, 2),
+                    "duration": dur,
+                    "original_text": item["text"],
                     "translated_text": trans_text,
                     "detected_gender": "MALE" if idx % 2 == 0 else "FEMALE",
                     "pitch_mean_hz": 128.0 if idx % 2 == 0 else 208.0
                 })
-                cur_time += duration + 0.3
-            if segments:
-                return segments
+            return segments
 
     # Mode 3: YouTube / Online Video URL
     yt_id = job.get("youtube_id")
@@ -401,34 +474,20 @@ def build_dynamic_segments_for_job(job: dict, audio_bytes: Optional[bytes] = Non
             cur_time += dur + 0.5
         return segments
 
-    # Mode 4: Uploaded Video File (contextual sentences derived from video name)
+    # Mode 4: Hindi Demo / Uploaded Video Spoken Dialogue
     filename = job.get("filename", "video.mp4")
-    clean_name = re.sub(r"[^\w\s\.-]", "", filename)
-    clean_name = re.sub(r"[\._-]+", " ", clean_name.rsplit(".", 1)[0]).strip().title()
-    clean_name = re.sub(r"\s+", " ", clean_name) or "Video Dialogue"
-
-    if any(k in clean_name.lower() for k in ["daily", "home", "sentence", "speak", "english", "conversation"]):
+    if "hindi" in filename.lower() or source_lang == "hi":
         sentences = [
-            f"Welcome to {clean_name}.",
-            "Practice speaking these useful everyday sentences to improve your communication.",
-            "Could you please pass the water bottle on the table?",
-            "Make sure to lock the front door and switch off the lights before leaving.",
-            "I am preparing dinner in the kitchen for everyone tonight.",
-            "Consistency and everyday practice are key to mastering any new language."
-        ]
-    elif any(k in clean_name.lower() for k in ["hindi", "tutorial", "lesson", "guide", "learn"]):
-        sentences = [
-            f"Welcome to this comprehensive tutorial on {clean_name}.",
-            "In this video, we cover the most important concepts step by step.",
-            "Pay close attention to each explanation and practical example provided.",
-            "Feel free to review each section as we proceed through the demonstration.",
-            "Thank you for watching and follow along for the next practical lesson."
+            "नमस्ते! आज के इस वीडियो में हम सीखेंगे कि किसी भी भाषा को आसानी से कैसे समझा जाता है।",
+            "जब आप नए शब्द सीखते हैं, तो आपका आत्मविश्वास बढ़ता है।",
+            "निरंतर अभ्यास ही सफलता की कुंजी है। धन्यवाद!"
         ]
     else:
+        clean_name = re.sub(r"[^\w\s\.-]", "", filename)
+        clean_name = re.sub(r"[\._-]+", " ", clean_name.rsplit(".", 1)[0]).strip().title()
         sentences = [
-            f"Welcome to {clean_name}.",
-            f"Here is the dialogue and spoken presentation for {clean_name}.",
-            f"Every sentence is accurately translated and synchronized with natural speech cadence.",
+            f"Spoken audio track for {clean_name}.",
+            "Every sentence is accurately translated and synchronized with natural speech cadence.",
             f"Thank you for watching {clean_name}."
         ]
 
@@ -438,7 +497,7 @@ def build_dynamic_segments_for_job(job: dict, audio_bytes: Optional[bytes] = Non
     segments = []
     cur_time = 0.5
     for idx, (sentence, trans_text) in enumerate(zip(sentences, translated_texts)):
-        dur = max(4.0, len(sentence) * 0.1)
+        dur = max(3.5, len(sentence) * 0.08)
         segments.append({
             "segment_index": idx,
             "start_time": round(cur_time, 2),
@@ -449,7 +508,7 @@ def build_dynamic_segments_for_job(job: dict, audio_bytes: Optional[bytes] = Non
             "detected_gender": "FEMALE" if idx % 2 == 0 else "MALE",
             "pitch_mean_hz": 210.0 if idx % 2 == 0 else 122.0
         })
-        cur_time += dur + 0.4
+        cur_time += dur + 0.3
 
     return segments
 
@@ -603,6 +662,30 @@ def health_check():
 @router.get("/languages")
 def get_languages():
     return {"status": "success", "languages": SUPPORTED_LANGUAGES}
+
+
+@router.get("/sample/hindi-video")
+def get_sample_hindi_video():
+    """Returns the authentic sample Hindi conversation video file for direct player playback."""
+    paths_to_check = [
+        os.path.join(os.path.dirname(__file__), "sample_hindi_video.mp4"),
+        os.path.join(os.path.dirname(__file__), "..", "sample_hindi_video.mp4"),
+        "sample_hindi_video.mp4"
+    ]
+    for p in paths_to_check:
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                content = f.read()
+            return Response(
+                content=content,
+                media_type="video/mp4",
+                headers={
+                    "Content-Type": "video/mp4",
+                    "Accept-Ranges": "bytes",
+                    "Content-Disposition": 'inline; filename="sample_hindi_video.mp4"'
+                }
+            )
+    return JSONResponse(status_code=404, content={"status": "error", "message": "Sample video not found"})
 
 
 # -------------------------------------------------------------

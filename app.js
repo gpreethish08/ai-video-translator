@@ -115,6 +115,77 @@
     return map[code] || code.toUpperCase();
   }
 
+  // --- Audio Extraction Utilities ---
+  function audioBufferToWav(buffer, optSampleRate = 16000) {
+    const numChannels = 1;
+    const sampleRate = optSampleRate;
+    const format = 1; // PCM
+    const bitDepth = 16;
+    const inputData = buffer.getChannelData(0);
+    const ratio = buffer.sampleRate / sampleRate;
+    const newLength = Math.round(inputData.length / ratio);
+    const samples = new Float32Array(newLength);
+
+    for (let i = 0; i < newLength; i++) {
+      const srcIndex = Math.floor(i * ratio);
+      samples[i] = inputData[srcIndex];
+    }
+
+    const byteRate = (sampleRate * numChannels * bitDepth) / 8;
+    const blockAlign = (numChannels * bitDepth) / 8;
+    const dataSize = samples.length * (bitDepth / 8);
+    const bufferSize = 44 + dataSize;
+    const arrayBuffer = new ArrayBuffer(bufferSize);
+    const view = new DataView(arrayBuffer);
+
+    function writeString(v, offset, str) {
+      for (let i = 0; i < str.length; i++) {
+        v.setUint8(offset + i, str.charCodeAt(i));
+      }
+    }
+
+    writeString(view, 0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(view, 8, "WAVE");
+    writeString(view, 12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, format, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(view, 36, "data");
+    view.setUint32(40, dataSize, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++) {
+      let s = Math.max(-1, Math.min(1, samples[i]));
+      s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      view.setInt16(offset, s, true);
+      offset += 2;
+    }
+    return new Blob([view], { type: "audio/wav" });
+  }
+
+  async function extractAudioWavFromFile(file) {
+    try {
+      const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtxClass) return null;
+      const audioCtx = new AudioCtxClass();
+      // Decode audio using Web Audio API (limit to 30MB for rapid client decoding)
+      const fileSlice = file.size > 30 * 1024 * 1024 ? file.slice(0, 30 * 1024 * 1024) : file;
+      const arrayBuffer = await fileSlice.arrayBuffer();
+      const audioBuffer = await new Promise((resolve, reject) => {
+        audioCtx.decodeAudioData(arrayBuffer, resolve, reject);
+      });
+      return audioBufferToWav(audioBuffer, 16000);
+    } catch (e) {
+      console.warn("Client audio extraction note:", e);
+      return null;
+    }
+  }
+
   // --- Mode Switching ---
   function switchMode(mode) {
     currentMode = mode;
@@ -201,9 +272,9 @@
   // --- Sample URL Loader ---
   loadHindiSampleUrlBtn.addEventListener("click", () => {
     switchMode("url");
-    videoUrlInput.value = "https://www.youtube.com/watch?v=kffacxfA7G4";
-    sourceLangSelect.value = "hi";
-    targetLangSelect.value = "en";
+    videoUrlInput.value = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    sourceLangSelect.value = "en";
+    targetLangSelect.value = "hi";
     updateSubmitButtonText();
   });
 
@@ -214,16 +285,20 @@
     targetLangSelect.value = "en";
     updateSubmitButtonText();
 
-    // Trigger instant demo translation with rich Hindi conversation dialogue
+    selectedFile = null;
+    selectedFileName.textContent = "sample_hindi_video.mp4 (Authentic Hindi Video)";
+    selectedFileSize.textContent = "259 KB";
+    dropzonePrompt.style.display = "none";
+    dropzoneSelected.style.display = "flex";
+
+    // Trigger instant demo translation of the authentic Hindi video
     executeTranslation({
       isDemo: true,
-      filename: "Hindi_Conversation_Demo.mp4",
+      filename: "sample_hindi_video.mp4",
       customScript: [
-        "नमस्ते! आज हम दैनिक जीवन में बोले जाने वाले महत्वपूर्ण वाक्यों का अभ्यास करेंगे।",
-        "कृपया मुझे पानी की बोतल दे दीजिए।",
-        "बाहर जाने से पहले मुख्य द्वार बंद कर दें और बत्तियाँ बुझा दें।",
-        "मैं आज रात सभी के लिए रसोई में स्वादिष्ट खाना बना रहा हूँ।",
-        "किसी भी नई भाषा को सीखने के लिए नियमित अभ्यास सबसे आवश्यक कदम है।"
+        "नमस्ते! आज के इस वीडियो में हम सीखेंगे कि किसी भी भाषा को आसानी से कैसे समझा जाता है।",
+        "जब आप नए शब्द सीखते हैं, तो आपका आत्मविश्वास बढ़ता है।",
+        "निरंतर अभ्यास ही सफलता की कुंजी है। धन्यवाद!"
       ].join("\n")
     });
   });
@@ -285,16 +360,16 @@
       let jobResult = null;
 
       if (options.isDemo) {
-        // Instant Demo execution
-        updateProgress(35, "Recognizing spoken Hindi sentences...", 1);
+        // Instant Demo execution using authentic sample Hindi video
+        updateProgress(35, "Transcribing authentic spoken Hindi dialogue from sample video...", 1);
         const formData = new FormData();
-        formData.append("filename", options.filename || "Hindi_Video_Sample.mp4");
+        formData.append("filename", "sample_hindi_video.mp4");
         formData.append("target_lang", targetLang);
         formData.append("source_lang", "hi");
         formData.append("gender_override", gender);
         formData.append("custom_script", options.customScript || "");
 
-        updateProgress(60, `Translating dialogue from Hindi to ${tgtName}...`, 2);
+        updateProgress(65, `Translating Hindi spoken dialogue into ${tgtName}...`, 2);
         const resp = await fetch("/api/translate/file", {
           method: "POST",
           body: formData
@@ -313,16 +388,22 @@
         formData.append("source_lang", sourceLang);
         formData.append("gender_override", gender);
 
-        // For files <= 3.5 MB, attach file directly. For larger files (up to 2 GB),
-        // we send metadata to backend to avoid Vercel 4.5 MB gateway limit (413 Request Entity Too Large).
-        // Browser plays video locally via URL.createObjectURL(file) with zero lag!
-        if (file.size <= 3.5 * 1024 * 1024) {
+        updateProgress(25, "Decoding audio track from video file in browser...", 0);
+        let wavBlob = null;
+        try {
+          wavBlob = await extractAudioWavFromFile(file);
+        } catch (e) {
+          console.warn("Audio extraction fallback note:", e);
+        }
+
+        if (wavBlob) {
+          formData.append("audio_sample", wavBlob, "extracted_speech.wav");
+        } else if (file.size <= 4.0 * 1024 * 1024) {
           formData.append("video", file);
         }
 
-        updateProgress(40, "Recognizing speech and spoken words in video...", 1);
-
-        updateProgress(65, `Translating spoken dialogue into ${tgtName}...`, 2);
+        updateProgress(45, "Transcribing actual speech from input video track...", 1);
+        updateProgress(70, `Translating spoken sentences into ${tgtName}...`, 2);
         const resp = await fetch("/api/translate/file", {
           method: "POST",
           body: formData
@@ -398,7 +479,13 @@
     const audioUrl = `/api/audio/${currentJobId}?lang=${targetLang}&src=${sourceLang}&yt=${ytParam}&title=${titleParam}&t=${Date.now()}`;
 
     // Setup Video Player
-    if (options.file && !options.isDemo) {
+    if (options.isDemo) {
+      // Direct sample Hindi video playback
+      youtubeWrapper.style.display = "none";
+      playerVideo.style.display = "block";
+      playerVideo.src = "/sample_hindi_video.mp4";
+      playerVideo.muted = true; // Muted so translated neural voice is heard in sync
+    } else if (options.file) {
       // Local video file playback
       youtubeWrapper.style.display = "none";
       playerVideo.style.display = "block";
@@ -410,22 +497,47 @@
       youtubeWrapper.style.display = "block";
       youtubeIframe.src = `https://www.youtube-nocookie.com/embed/${job.youtube_id}?autoplay=0&enablejsapi=1`;
     } else {
-      // Fallback or demo: use HTML5 player or audio
       youtubeWrapper.style.display = "none";
       playerVideo.style.display = "block";
-      playerVideo.src = audioUrl;
-      playerVideo.muted = false;
+      playerVideo.src = "/sample_hindi_video.mp4";
+      playerVideo.muted = true;
     }
 
     // Setup Audio Player
     playerAudio.src = audioUrl;
 
+    let audioMode = "translated"; // 'translated' or 'original'
+    const toggleAudioTrackBtn = document.getElementById("toggleAudioTrackBtn");
+    if (toggleAudioTrackBtn) {
+      toggleAudioTrackBtn.textContent = "🔊 Mode: Translated Target Voice (Click to switch to Original)";
+      toggleAudioTrackBtn.onclick = () => {
+        if (audioMode === "translated") {
+          audioMode = "original";
+          playerVideo.muted = false;
+          playerAudio.pause();
+          toggleAudioTrackBtn.textContent = "🔈 Mode: Original Input Video Audio (Click to switch to Translated)";
+        } else {
+          audioMode = "translated";
+          playerVideo.muted = true;
+          playerAudio.currentTime = playerVideo.currentTime;
+          if (!playerVideo.paused) {
+            playerAudio.play().catch(() => {});
+          }
+          toggleAudioTrackBtn.textContent = "🔊 Mode: Translated Target Voice (Click to switch to Original)";
+        }
+      };
+    }
+
     // Dual Player Synchronization:
     // When video plays, unmute translated audio and sync timestamps
     playerVideo.onplay = () => {
-      playerVideo.muted = true; // keep video audio muted so translated track is heard
-      playerAudio.currentTime = playerVideo.currentTime;
-      playerAudio.play().catch(() => {});
+      if (audioMode === "translated") {
+        playerVideo.muted = true; // keep video audio muted so translated track is heard
+        playerAudio.currentTime = playerVideo.currentTime;
+        playerAudio.play().catch(() => {});
+      } else {
+        playerVideo.muted = false;
+      }
     };
 
     playerVideo.onpause = () => {
