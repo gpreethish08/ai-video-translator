@@ -21,6 +21,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const fileNameLabel = document.getElementById("file-name-label");
     const fileSizeLabel = document.getElementById("file-size-label");
     const urlInput = document.getElementById("video-url-input");
+    const demoHindiBtn = document.getElementById("demo-hindi-btn");
+    const sourceLangSelect = document.getElementById("source-language-select");
     const targetLangSelect = document.getElementById("target-language-select");
     const genderSelect = document.getElementById("gender-mode-select");
     const lipSyncToggle = document.getElementById("lip-sync-toggle");
@@ -360,6 +362,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (res.ok) {
                 const data = await res.json();
                 if (data.languages && data.languages.length > 0) {
+                    const currentVal = targetLangSelect.value;
                     targetLangSelect.innerHTML = "";
                     data.languages.forEach(l => {
                         const opt = document.createElement("option");
@@ -367,7 +370,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         opt.textContent = `${l.name} (${l.code.toUpperCase()})`;
                         targetLangSelect.appendChild(opt);
                     });
-                    targetLangSelect.value = "ta"; // Tamil default
+                    if (currentVal && Array.from(targetLangSelect.options).some(o => o.value === currentVal)) {
+                        targetLangSelect.value = currentVal;
+                    } else {
+                        targetLangSelect.value = "en";
+                    }
                 }
             }
         } catch (e) {
@@ -376,12 +383,31 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     fetchLanguages();
 
+    // 1-Click Demo: Hindi Video to English Translation
+    if (demoHindiBtn) {
+        demoHindiBtn.addEventListener("click", () => {
+            tabButtons.forEach(b => b.classList.remove("active"));
+            tabContents.forEach(c => c.classList.remove("active"));
+            const urlTabBtn = document.querySelector('[data-tab="url-tab"]');
+            const urlTabContent = document.getElementById("url-tab");
+            if (urlTabBtn) urlTabBtn.classList.add("active");
+            if (urlTabContent) urlTabContent.classList.add("active");
+
+            urlInput.value = "https://www.youtube.com/watch?v=uD_j1GjegFE";
+            if (sourceLangSelect) sourceLangSelect.value = "hi";
+            if (targetLangSelect) targetLangSelect.value = "en";
+
+            startBtn.click();
+        });
+    }
+
     // -------------------------------------------------------------
     // 5. Start Translation Trigger
     // -------------------------------------------------------------
     startBtn.addEventListener("click", async () => {
         const isUploadTab = document.getElementById("upload-tab").classList.contains("active");
-        const targetLang = targetLangSelect.value;
+        const sourceLang = sourceLangSelect ? sourceLangSelect.value : "auto";
+        const targetLang = targetLangSelect.value || "en";
         const genderOverride = genderSelect.value;
         const lipSync = lipSyncToggle.checked;
         const fastMode = fastModeToggle.checked;
@@ -425,6 +451,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
                 formData.append("filename", currentFile.name);
                 formData.append("file_size", currentFile.size);
+                formData.append("source_lang", sourceLang);
                 formData.append("target_lang", targetLang);
                 formData.append("gender_override", genderOverride);
                 formData.append("lip_sync_enabled", lipSync);
@@ -459,6 +486,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         url: urlVal,
+                        source_lang: sourceLang,
                         target_lang: targetLang,
                         gender_override: genderOverride,
                         lip_sync_enabled: lipSync,
@@ -514,8 +542,10 @@ document.addEventListener("DOMContentLoaded", () => {
             pollCount++;
             try {
                 const ytParam = encodeURIComponent(window._currentYouTubeId || "");
-                const langParam = encodeURIComponent(targetLangSelect.value || "ta");
-                const res = await fetch(`/api/jobs/${jobId}?yt=${ytParam}&lang=${langParam}`);
+                const langParam = encodeURIComponent(targetLangSelect.value || "en");
+                const srcParam = encodeURIComponent(sourceLangSelect ? sourceLangSelect.value : "auto");
+                const titleParam = encodeURIComponent(window._uploadedVideoFile ? window._uploadedVideoFile.name : (urlInput.value.trim().substring(0, 40)));
+                const res = await fetch(`/api/jobs/${jobId}?yt=${ytParam}&lang=${langParam}&src=${srcParam}&title=${titleParam}`);
                 if (!res.ok) {
                     if (pollCount > 4) {
                         clearInterval(pollingInterval);
@@ -593,15 +623,20 @@ document.addEventListener("DOMContentLoaded", () => {
         downloadBanner.classList.remove("hidden");
         if (audioControlsBar) audioControlsBar.classList.remove("hidden");
 
-        const targetLang = (job.target_language || "ta").toLowerCase();
+        const targetLang = (job.target_language || targetLangSelect.value || "en").toLowerCase();
+        const sourceLang = (job.source_language || (sourceLangSelect ? sourceLangSelect.value : "auto")).toLowerCase();
         const targetLangCode = targetLang.toUpperCase();
         if (translatedTrackLabel) {
             translatedTrackLabel.textContent = `🔊 Translated Neural Audio (${targetLangCode})`;
         }
 
-        // Set up authentic neural translated audio element with cache buster
+        const ytId = job.youtube_id || window._currentYouTubeId || "";
+        const titleParam = encodeURIComponent(job.filename || job.title || (window._uploadedVideoFile ? window._uploadedVideoFile.name : ""));
         const timestamp = Date.now();
-        const audioStreamUrl = `/api/audio/${job.job_id}?t=${timestamp}`;
+        const queryParams = `lang=${encodeURIComponent(targetLang)}&src=${encodeURIComponent(sourceLang)}&yt=${encodeURIComponent(ytId)}&title=${titleParam}&t=${timestamp}`;
+
+        // Set up authentic neural translated audio element with cache buster and query params
+        const audioStreamUrl = `/api/audio/${job.job_id}?${queryParams}`;
         if (translatedAudioElement) {
             translatedAudioElement.pause();
             translatedAudioElement.currentTime = 0;
@@ -611,17 +646,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Configure 3 Download Action Buttons
         if (downloadAudioBtn) {
-            downloadAudioBtn.href = `/api/download/audio/${job.job_id}?t=${timestamp}`;
+            downloadAudioBtn.href = `/api/download/audio/${job.job_id}?${queryParams}`;
             downloadAudioBtn.setAttribute("download", `translated_audio_${targetLang}_${job.job_id.substring(0, 8)}.mp3`);
         }
 
         if (downloadSubtitlesBtn) {
-            downloadSubtitlesBtn.href = `/api/subtitles/${job.job_id}?t=${timestamp}`;
+            downloadSubtitlesBtn.href = `/api/subtitles/${job.job_id}?${queryParams}`;
             downloadSubtitlesBtn.setAttribute("download", `translated_subtitles_${targetLang}_${job.job_id.substring(0, 8)}.srt`);
         }
 
         if (downloadBtn) {
-            downloadBtn.href = `/api/download/${job.job_id}?t=${timestamp}`;
+            downloadBtn.href = `/api/download/${job.job_id}?${queryParams}`;
             downloadBtn.setAttribute("download", `translated_${targetLang}_${job.job_id.substring(0, 8)}.mp4`);
         }
 

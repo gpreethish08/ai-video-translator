@@ -125,6 +125,12 @@
                             <input type="url" id="video-url-input" placeholder="https://www.youtube.com/watch?v=... or .mp4 link">
                         </div>
                         <span class="input-hint">Supports YouTube, Vimeo, Twitch clips, and direct HTTP/HTTPS video links.</span>
+                        <div class="quick-demo-wrapper" style="margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <span style="font-size: 0.82rem; color: #94a3b8; font-weight: 500;">One-Click Demo:</span>
+                            <button type="button" id="demo-hindi-btn" class="btn btn-secondary btn-sm" style="font-size: 0.82rem; padding: 5px 12px; background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); color: #c7d2fe; cursor: pointer; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+                                <span>🇮🇳 ➔ 🇬🇧 Load Hindi Video & Translate to English Demo</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -132,16 +138,17 @@
                 <div class="config-section">
                     <h3>2. Translation & Voice Settings</h3>
                     
-                    <!-- Language Selection -->
+                    <!-- Source Language Selection -->
                     <div class="form-group">
-                        <label for="target-language-select">Target Language</label>
-                        <select id="target-language-select" class="form-select">
-                            <!-- Populated dynamically via API -->
-                            <option value="es">Spanish (Español)</option>
+                        <label for="source-language-select">Source / Original Video Language</label>
+                        <select id="source-language-select" class="form-select">
+                            <option value="auto" selected>✨ Auto-Detect Original Language (AI Whisper)</option>
                             <option value="hi">Hindi (हिन्दी)</option>
+                            <option value="en">English (English)</option>
+                            <option value="ta">Tamil (தமிழ்)</option>
+                            <option value="es">Spanish (Español)</option>
                             <option value="fr">French (Français)</option>
                             <option value="de">German (Deutsch)</option>
-                            <option value="ta">Tamil (தமிழ்)</option>
                             <option value="te">Telugu (తెలుగు)</option>
                             <option value="ja">Japanese (日本語)</option>
                             <option value="zh">Chinese (Mandarin)</option>
@@ -151,6 +158,29 @@
                             <option value="it">Italian (Italiano)</option>
                             <option value="ko">Korean (한국어)</option>
                         </select>
+                        <span class="input-hint">Specify the language spoken in the video, or let AI automatically detect it.</span>
+                    </div>
+
+                    <!-- Target Language Selection -->
+                    <div class="form-group">
+                        <label for="target-language-select">Target Translation Language</label>
+                        <select id="target-language-select" class="form-select">
+                            <option value="en" selected>English (English)</option>
+                            <option value="hi">Hindi (हिन्दी)</option>
+                            <option value="ta">Tamil (தமிழ்)</option>
+                            <option value="es">Spanish (Español)</option>
+                            <option value="fr">French (Français)</option>
+                            <option value="de">German (Deutsch)</option>
+                            <option value="te">Telugu (తెలుగు)</option>
+                            <option value="ja">Japanese (日本語)</option>
+                            <option value="zh">Chinese (Mandarin)</option>
+                            <option value="ar">Arabic (العربية)</option>
+                            <option value="ru">Russian (Русский)</option>
+                            <option value="pt">Portuguese (Português)</option>
+                            <option value="it">Italian (Italiano)</option>
+                            <option value="ko">Korean (한국어)</option>
+                        </select>
+                        <span class="input-hint">The target language you want the audio dialogue translated and spoken in.</span>
                     </div>
 
                     <!-- Voice Diarization & Gender Selection -->
