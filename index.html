@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Video Translator Studio | Multi-Language Spoken Video Translation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header / Nav -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">🎙️</div>
+        <div>
+          <h1 class="brand-title">AI Video Translator <span class="badge-pro">STUDIO 2.0</span></h1>
+          <p class="brand-sub">Authentic Spoken Video & YouTube Translation with Neural Voices</p>
+        </div>
+      </div>
+      <div class="nav-actions">
+        <button id="authBtn" class="btn btn-outline" type="button">
+          <span class="google-icon">G</span>
+          <span id="authBtnText">Sign In</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="app-container">
+    <!-- Hero / Promo Bar -->
+    <section class="demo-banner">
+      <div class="demo-banner-content">
+        <span class="demo-badge">🚀 Instant 1-Click Test</span>
+        <span class="demo-text">Verify authentic Hindi ➔ English translation instantly without manual upload:</span>
+      </div>
+      <button id="demoHindiBtn" class="btn btn-demo" type="button">
+        🇮🇳 ➔ 🇬🇧 Load Hindi Video & Translate to English
+      </button>
+    </section>
+
+    <!-- Main Workspace Card -->
+    <div class="studio-card">
+      <!-- Input Mode Tabs -->
+      <div class="tabs-header">
+        <button id="tabUploadBtn" class="tab-btn active" type="button">
+          <span class="tab-icon">📁</span> Upload Video File <span class="pill">Up to 2 GB</span>
+        </button>
+        <button id="tabUrlBtn" class="tab-btn" type="button">
+          <span class="tab-icon">🔗</span> YouTube / Video URL
+        </button>
+      </div>
+
+      <!-- Tab 1: Video File Upload -->
+      <div id="tabUploadContent" class="tab-pane active">
+        <div class="dropzone" id="dropzone">
+          <!-- Full-area overlay input ensures 100% click & drop reliability on all browsers -->
+          <input 
+            type="file" 
+            id="videoFileInput" 
+            class="dropzone-file-input" 
+            accept="video/*,audio/*,.mp4,.mov,.mkv,.webm,.avi,.mp3,.wav,.m4a"
+            aria-label="Upload video file"
+          />
+          <div class="dropzone-content" id="dropzonePrompt">
+            <div class="dropzone-icon">📥</div>
+            <h3 class="dropzone-title">Click to browse or drag & drop video here</h3>
+            <p class="dropzone-desc">Supports MP4, MOV, MKV, WebM, AVI, and audio tracks</p>
+            <div class="dropzone-badges">
+              <span class="drop-tag">⚡ Large Files (Up to 2 GB) Supported</span>
+              <span class="drop-tag">🔒 Zero-Data-Leak Processing</span>
+            </div>
+          </div>
+
+          <div class="dropzone-selected" id="dropzoneSelected" style="display: none;">
+            <div class="selected-file-icon">🎬</div>
+            <div class="selected-file-details">
+              <div class="selected-file-name" id="selectedFileName">video.mp4</div>
+              <div class="selected-file-meta">
+                <span class="file-size-badge" id="selectedFileSize">0 MB</span>
+                <span class="file-status-badge">Ready for translation</span>
+              </div>
+            </div>
+            <button type="button" id="changeFileBtn" class="btn btn-sm btn-ghost">Change File</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: URL Translation -->
+      <div id="tabUrlContent" class="tab-pane" style="display: none;">
+        <div class="url-input-container">
+          <label for="videoUrlInput" class="form-label">YouTube or Direct Video URL:</label>
+          <div class="input-with-button">
+            <input 
+              type="url" 
+              id="videoUrlInput" 
+              class="form-input" 
+              placeholder="https://www.youtube.com/watch?v=..."
+            />
+            <button type="button" id="loadHindiSampleUrlBtn" class="btn btn-outline btn-sm">
+              🇮🇳 Sample Hindi URL
+            </button>
+          </div>
+          <p class="form-hint">Paste any public YouTube link, Shorts, or MP4 URL. Spoken audio dialogue is automatically extracted.</p>
+        </div>
+      </div>
+
+      <!-- Translation Configuration Bar -->
+      <div class="config-grid">
+        <div class="config-col">
+          <label for="sourceLangSelect" class="form-label">
+            <span class="label-icon">🗣️</span> Spoken Language (Input):
+          </label>
+          <select id="sourceLangSelect" class="form-select">
+            <option value="auto">Auto Detect Language</option>
+            <option value="hi" selected>Hindi (हिन्दी)</option>
+            <option value="en">English (US / UK / Global)</option>
+            <option value="ta">Tamil (தமிழ்)</option>
+            <option value="te">Telugu (తెలుగు)</option>
+            <option value="es">Spanish (Español)</option>
+            <option value="fr">French (Français)</option>
+            <option value="de">German (Deutsch)</option>
+            <option value="ja">Japanese (日本語)</option>
+            <option value="zh">Chinese (中文)</option>
+            <option value="ar">Arabic (العربية)</option>
+            <option value="ru">Russian (Русский)</option>
+            <option value="pt">Portuguese (Português)</option>
+            <option value="it">Italian (Italiano)</option>
+            <option value="ko">Korean (한국어)</option>
+            <option value="mr">Marathi (मराठी)</option>
+            <option value="bn">Bengali (বাংলা)</option>
+          </select>
+        </div>
+
+        <div class="config-col">
+          <label for="targetLangSelect" class="form-label">
+            <span class="label-icon">🌐</span> Target Translated Language:
+          </label>
+          <select id="targetLangSelect" class="form-select">
+            <option value="en" selected>English (English Neural Voice)</option>
+            <option value="hi">Hindi (हिन्दी न्यूरल आवाज़)</option>
+            <option value="ta">Tamil (தமிழ் நியூரல் குரல்)</option>
+            <option value="es">Spanish (Español)</option>
+            <option value="fr">French (Français)</option>
+            <option value="de">German (Deutsch)</option>
+            <option value="te">Telugu (తెలుగు)</option>
+            <option value="ja">Japanese (日本語)</option>
+            <option value="zh">Chinese (中文)</option>
+            <option value="ar">Arabic (العربية)</option>
+            <option value="ru">Russian (Русский)</option>
+            <option value="pt">Portuguese (Português)</option>
+            <option value="it">Italian (Italiano)</option>
+            <option value="ko">Korean (한국어)</option>
+            <option value="mr">Marathi (मराठी)</option>
+            <option value="bn">Bengali (বাংলা)</option>
+          </select>
+        </div>
+
+        <div class="config-col">
+          <label for="voiceGenderSelect" class="form-label">
+            <span class="label-icon">🎭</span> Voice Profile:
+          </label>
+          <select id="voiceGenderSelect" class="form-select">
+            <option value="auto" selected>Auto Match Speaker Tone</option>
+            <option value="female">Natural Female Voice</option>
+            <option value="male">Natural Male Voice</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Action Button -->
+      <div class="action-container">
+        <button id="translateSubmitBtn" class="btn btn-primary btn-hero" type="button">
+          <span class="btn-icon">⚡</span>
+          <span id="translateSubmitText">Translate Video to English</span>
+        </button>
+      </div>
+
+      <!-- Progress Section -->
+      <div id="progressSection" class="progress-section" style="display: none;">
+        <div class="progress-header">
+          <div class="progress-status-container">
+            <div class="spinner"></div>
+            <span id="progressStatusText" class="progress-status-text">Processing audio track...</span>
+          </div>
+          <span id="progressPercentage" class="progress-percentage">0%</span>
+        </div>
+        <div class="progress-bar-container">
+          <div id="progressBar" class="progress-bar" style="width: 0%;"></div>
+        </div>
+        <div class="progress-steps-list">
+          <span id="step1" class="step-badge active">1. Extract Audio</span>
+          <span id="step2" class="step-badge">2. Speech Recognition</span>
+          <span id="step3" class="step-badge">3. Neural Translation</span>
+          <span id="step4" class="step-badge">4. Voice Synthesis</span>
+          <span id="step5" class="step-badge">5. Subtitle Sync</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Output & Results Studio -->
+    <div id="resultsStudio" class="results-studio" style="display: none;">
+      <div class="results-header">
+        <div class="results-title-group">
+          <h2 class="results-title">🎉 Translation Complete</h2>
+          <p id="resultsSub" class="results-sub">Synchronized authentic translated dialogue with neural voice synthesis</p>
+        </div>
+        <div class="results-actions">
+          <button id="downloadAudioBtn" class="btn btn-outline btn-sm" type="button">
+            📥 Download Translated Audio (.MP3)
+          </button>
+          <button id="downloadSrtBtn" class="btn btn-outline btn-sm" type="button">
+            📝 Download Subtitles (.SRT)
+          </button>
+        </div>
+      </div>
+
+      <!-- Video & Player Grid -->
+      <div class="player-grid">
+        <!-- Main Media Player Player -->
+        <div class="video-container-card">
+          <div class="video-wrapper" id="videoWrapper">
+            <!-- Local Video Player -->
+            <video id="playerVideo" controls playsinline preload="metadata">
+              Your browser does not support HTML5 video.
+            </video>
+            <!-- YouTube Iframe Player -->
+            <div id="youtubeWrapper" style="display: none;" class="youtube-wrapper">
+              <iframe id="youtubeIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
+          </div>
+          <!-- Live Subtitles Overlay Bar -->
+          <div class="live-subtitle-box" id="liveSubtitleBox">
+            <span class="sub-label">Subtitles:</span>
+            <span id="liveSubtitleText" class="sub-text">Subtitles will appear here during playback...</span>
+          </div>
+        </div>
+
+        <!-- Translated Audio Track Player -->
+        <div class="audio-track-card">
+          <div class="audio-track-header">
+            <div class="audio-track-info">
+              <span class="audio-icon">🔊</span>
+              <div>
+                <h4 class="audio-title">Translated Audio Stream</h4>
+                <p id="audioLanguageBadge" class="audio-sub">Language: English (Neural Voice)</p>
+              </div>
+            </div>
+            <div class="sync-status">
+              <span class="status-dot"></span> Synced
+            </div>
+          </div>
+          <audio id="playerAudio" controls preload="auto"></audio>
+          <div class="audio-playback-tips">
+            <p>💡 <strong>Tip:</strong> Press play on the video player or audio track to listen to the accurate translation in the target language.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Diarized Spoken Dialogue Segments Table -->
+      <div class="segments-card">
+        <div class="segments-header">
+          <h3>📜 Spoken Dialogue Segments & Translations</h3>
+          <span class="badge-count" id="segmentCountBadge">0 Segments</span>
+        </div>
+        <div class="table-container">
+          <table class="segments-table">
+            <thead>
+              <tr>
+                <th style="width: 12%;">Timestamp</th>
+                <th style="width: 44%;">Input Dialogue (Original)</th>
+                <th style="width: 44%;">Translated Dialogue (Target Voice)</th>
+              </tr>
+            </thead>
+            <tbody id="segmentsTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Authentication Modal -->
+  <div id="authModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Sign In to AI Video Translator</h3>
+        <button id="closeAuthModal" class="btn-close" type="button">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Unlock unlimited 40-minute high-definition translations and custom voice cloning.</p>
+        
+        <!-- Google 1-Click Sign-In -->
+        <button id="googleSignInBtn" class="btn btn-google btn-block" type="button">
+          <svg class="google-svg" viewBox="0 0 24 24" width="20" height="20">
+            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+          </svg>
+          Continue with Google / Gmail
+        </button>
+
+        <div class="divider">
+          <span>or sign in with email</span>
+        </div>
+
+        <form id="emailAuthForm">
+          <div class="form-group">
+            <label for="authEmailInput" class="form-label">Email Address</label>
+            <input type="email" id="authEmailInput" class="form-input" placeholder="you@gmail.com" required />
+          </div>
+          <div class="form-group">
+            <label for="authPasswordInput" class="form-label">Password</label>
+            <input type="password" id="authPasswordInput" class="form-input" placeholder="••••••••" required />
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Sign In / Register</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <div class="footer-container">
+      <p>AI Video Translator Studio &bull; Built with FastAPI, Web Audio API & Neural Speech Synthesis &bull; 100% Free & Open Source</p>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

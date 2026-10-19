@@ -1,0 +1,6 @@
+fastapi>=0.110.0
+pydantic>=2.0.0
+python-multipart>=0.0.9
+requests>=2.31.0
+youtube-transcript-api>=0.6.2
+speechrecognition>=3.10.0
