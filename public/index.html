@@ -91,8 +91,8 @@
 
                 <!-- Tab 1: Upload File -->
                 <div id="upload-tab" class="tab-content active">
-                    <div class="dropzone" id="dropzone">
-                        <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/quicktime,video/webm" hidden>
+                    <label for="video-file-input" class="dropzone" id="dropzone" style="cursor: pointer; display: block;">
+                        <input type="file" id="video-file-input" accept="video/*,audio/*,.mp4,.mov,.mkv,.webm,.avi,.m4v,.flv,.wmv,.3gp,.wav,.mp3" style="display: none;">
                         <div class="dropzone-content">
                             <div class="upload-icon-circle">
                                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -102,14 +102,14 @@
                                 </svg>
                             </div>
                             <h3>Drag & Drop Video File</h3>
-                            <p>MP4, MOV, MKV, WebM up to 40 mins (2 GB)</p>
-                            <button type="button" class="btn btn-secondary" onclick="document.getElementById('video-file-input').click()">Browse Computer</button>
+                            <p>MP4, MOV, MKV, WebM, AVI up to 40 mins (2 GB)</p>
+                            <span class="btn btn-secondary" style="pointer-events: none;">Browse Computer</span>
                             <div id="selected-file-info" class="selected-file-info hidden">
                                 <span class="file-name" id="file-name-label"></span>
                                 <span class="file-size" id="file-size-label"></span>
                             </div>
                         </div>
-                    </div>
+                    </label>
                 </div>
 
                 <!-- Tab 2: Video URL -->

@@ -328,29 +328,54 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     async function extractVoiceSample(file) {
-        try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (!AudioCtx) return null;
-            const ctx = new AudioCtx();
-            let arrayBuf;
-            if (file.size <= 35 * 1024 * 1024) {
-                arrayBuf = await file.arrayBuffer();
-            } else {
-                arrayBuf = await file.slice(0, 25 * 1024 * 1024).arrayBuffer();
+        if (!file || file.size > 15 * 1024 * 1024) return null;
+        return new Promise((resolve) => {
+            const timeout = setTimeout(() => {
+                console.log("Audio sample extraction timed out (2.5s safe limit), proceeding.");
+                resolve(null);
+            }, 2500);
+
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) {
+                    clearTimeout(timeout);
+                    return resolve(null);
+                }
+                const ctx = new AudioCtx();
+                const sliceSize = Math.min(file.size, 4 * 1024 * 1024);
+                file.slice(0, sliceSize).arrayBuffer().then(arrayBuf => {
+                    ctx.decodeAudioData(
+                        arrayBuf,
+                        (decoded) => {
+                            clearTimeout(timeout);
+                            try {
+                                const dur = Math.min(decoded.duration, 15.0);
+                                const offlineCtx = new OfflineAudioContext(1, Math.floor(dur * 16000), 16000);
+                                const src = offlineCtx.createBufferSource();
+                                src.buffer = decoded;
+                                src.connect(offlineCtx.destination);
+                                src.start(0);
+                                offlineCtx.startRendering().then(rendered => {
+                                    resolve(audioBufferToWav(rendered, 16000));
+                                }).catch(() => resolve(null));
+                            } catch (_) {
+                                resolve(null);
+                            }
+                        },
+                        () => {
+                            clearTimeout(timeout);
+                            resolve(null);
+                        }
+                    );
+                }).catch(() => {
+                    clearTimeout(timeout);
+                    resolve(null);
+                });
+            } catch (_) {
+                clearTimeout(timeout);
+                resolve(null);
             }
-            const decoded = await ctx.decodeAudioData(arrayBuf);
-            const duration = Math.min(decoded.duration, 25.0);
-            const offlineCtx = new OfflineAudioContext(1, Math.floor(duration * 16000), 16000);
-            const src = offlineCtx.createBufferSource();
-            src.buffer = decoded;
-            src.connect(offlineCtx.destination);
-            src.start(0);
-            const rendered = await offlineCtx.startRendering();
-            return audioBufferToWav(rendered, 16000);
-        } catch (e) {
-            console.log("WebAudio extraction notice:", e);
-            return null;
-        }
+        });
     }
 
     // -------------------------------------------------------------
@@ -461,10 +486,11 @@ document.addEventListener("DOMContentLoaded", () => {
                     formData.append("custom_script", customScript);
                 }
 
-                // Extract audio voice sample for speech-to-text
+                // Safely extract audio voice sample without freezing the browser
                 try {
                     const sampleWav = await extractVoiceSample(currentFile);
-                    if (sampleWav) {
+                    const videoPayloadSize = (currentFile.size <= 3.5 * 1024 * 1024) ? currentFile.size : 0;
+                    if (sampleWav && (sampleWav.size + videoPayloadSize) < 3.8 * 1024 * 1024) {
                         formData.append("audio_sample", sampleWav, "sample.wav");
                     }
                 } catch (_) {}
