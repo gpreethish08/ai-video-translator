@@ -116,16 +116,20 @@
   }
 
   // --- Audio Extraction Utilities ---
-  function audioBufferToWav(buffer, optSampleRate = 16000) {
+  function audioBufferToWav(buffer, optSampleRate = 16000, maxDurationSec = 75) {
     const numChannels = 1;
     const sampleRate = optSampleRate;
     const format = 1; // PCM
     const bitDepth = 16;
     const inputData = buffer.getChannelData(0);
     const ratio = buffer.sampleRate / sampleRate;
-    const newLength = Math.round(inputData.length / ratio);
-    const samples = new Float32Array(newLength);
 
+    // Strict duration cap (max 75 seconds = max ~2.4 MB WAV to NEVER trigger Vercel 4.5 MB 413 error)
+    const totalCalculated = Math.round(inputData.length / ratio);
+    const maxAllowedSamples = Math.round(sampleRate * maxDurationSec);
+    const newLength = Math.min(totalCalculated, maxAllowedSamples);
+
+    const samples = new Float32Array(newLength);
     for (let i = 0; i < newLength; i++) {
       const srcIndex = Math.floor(i * ratio);
       samples[i] = inputData[srcIndex];
@@ -179,7 +183,7 @@
       const audioBuffer = await new Promise((resolve, reject) => {
         audioCtx.decodeAudioData(arrayBuffer, resolve, reject);
       });
-      return audioBufferToWav(audioBuffer, 16000);
+      return audioBufferToWav(audioBuffer, 16000, 75);
     } catch (e) {
       console.warn("Client audio extraction note:", e);
       return null;
@@ -396,9 +400,10 @@
           console.warn("Audio extraction fallback note:", e);
         }
 
-        if (wavBlob) {
+        // Guarantee payload is strictly <= 3.2 MB to completely prevent Vercel 4.5 MB HTTP 413 error
+        if (wavBlob && wavBlob.size <= 3.2 * 1024 * 1024) {
           formData.append("audio_sample", wavBlob, "extracted_speech.wav");
-        } else if (file.size <= 4.0 * 1024 * 1024) {
+        } else if (file.size <= 3.0 * 1024 * 1024) {
           formData.append("video", file);
         }
 

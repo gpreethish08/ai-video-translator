@@ -230,28 +230,15 @@ def extract_youtube_real_transcript(yt_id: str, max_sentences: int = 15, preferr
         return []
 
 
-def extract_pcm_from_media(media_bytes: bytes) -> bytes:
-    """Decodes audio from ANY media container (WAV, MP4, WebM, MOV, MKV, MP3, AAC, FLAC) into mono 16kHz 16-bit PCM."""
-    if not media_bytes or len(media_bytes) < 100:
+def ensure_wav_bytes(media_bytes: bytes) -> bytes:
+    """Ensures input media bytes are in valid WAV format for SpeechRecognition."""
+    if not media_bytes or len(media_bytes) < 44:
         return b""
+    # Check for RIFF...WAVE header
+    if media_bytes[:4] == b"RIFF" and media_bytes[8:12] == b"WAVE":
+        return media_bytes
 
-    # 1. Direct WAV header inspection
-    try:
-        with wave.open(io.BytesIO(media_bytes), "rb") as wf:
-            n_channels = wf.getnchannels()
-            sampwidth = wf.getsampwidth()
-            framerate = wf.getframerate()
-            frames = wf.readframes(wf.getnframes())
-            if n_channels == 1 and sampwidth == 2 and framerate == 16000:
-                return frames
-            elif n_channels == 2 and sampwidth == 2 and framerate == 16000:
-                # Convert stereo to mono by taking left channel
-                import audioop
-                return audioop.tomono(frames, 2, 1, 0)
-    except Exception:
-        pass
-
-    # 2. PyAV decoding for MP4, WebM, MOV, MKV, MP3, AAC, etc.
+    # If MP4, WebM, MOV, MKV, MP3, use PyAV to convert in-memory to 16kHz mono WAV
     try:
         import av
         bio = io.BytesIO(media_bytes)
@@ -262,20 +249,27 @@ def extract_pcm_from_media(media_bytes: bytes) -> bytes:
             for r_frame in resampler.resample(frame):
                 pcm_chunks.append(bytes(r_frame.planes[0]))
         if pcm_chunks:
-            return b"".join(pcm_chunks)
+            pcm_data = b"".join(pcm_chunks)
+            out_bio = io.BytesIO()
+            with wave.open(out_bio, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(pcm_data)
+            return out_bio.getvalue()
     except Exception as e:
-        logger.warning(f"PyAV media extraction notice: {e}")
+        logger.warning(f"PyAV conversion notice: {e}")
 
-    return b""
+    return media_bytes
 
 
 def transcribe_audio_bytes(media_bytes: bytes, source_lang: str = "auto") -> List[dict]:
-    """Transcribes audio from media bytes using Google Speech Recognition, returning timestamped sentences."""
+    """Transcribes audio using SpeechRecognition, returning timestamped sentences."""
     if not media_bytes or len(media_bytes) < 500:
         return []
 
-    pcm_data = extract_pcm_from_media(media_bytes)
-    if not pcm_data:
+    wav_bytes = ensure_wav_bytes(media_bytes)
+    if not wav_bytes:
         return []
 
     try:
@@ -301,46 +295,41 @@ def transcribe_audio_bytes(media_bytes: bytes, source_lang: str = "auto") -> Lis
             "bn": "bn-IN"
         }
         sl = (source_lang or "auto").lower()
-        lang_code = stt_map.get(sl, "hi-IN" if sl == "hi" else "en-US")
+        primary_lang = stt_map.get(sl, "hi-IN" if sl in ("hi", "auto") else "en-US")
 
-        # 16kHz 16-bit mono = 32,000 bytes per second
-        # Transcribe in 10-second chunks (320,000 bytes)
-        chunk_sec = 10
-        chunk_bytes = 16000 * 2 * chunk_sec
         sentences = []
-        cur_sec = 0.5
+        with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
+            total_duration = source.DURATION
+            cur = 0.0
+            # Read in 12-second speech chunks
+            while cur < total_duration:
+                chunk_dur = min(12.0, total_duration - cur)
+                audio = r.record(source, duration=chunk_dur)
+                rec_text = ""
+                try:
+                    rec_text = r.recognize_google(audio, language=primary_lang)
+                except Exception:
+                    # If auto or primary failed, try fallback language
+                    if sl in ("auto", "hi"):
+                        try:
+                            rec_text = r.recognize_google(audio, language="en-US" if primary_lang == "hi-IN" else "hi-IN")
+                        except Exception:
+                            pass
 
-        for i in range(0, len(pcm_data), chunk_bytes):
-            chunk = pcm_data[i:i + chunk_bytes]
-            if len(chunk) < 16000 * 2 * 0.5:
-                continue
-            audio = sr.AudioData(chunk, 16000, 2)
-            rec_text = ""
-            try:
-                rec_text = r.recognize_google(audio, language=lang_code)
-            except Exception:
-                # If auto or failed, retry with alternate language
-                if sl in ("auto", "hi"):
-                    try:
-                        rec_text = r.recognize_google(audio, language="en-US" if lang_code == "hi-IN" else "hi-IN")
-                    except Exception:
-                        pass
+                if rec_text and rec_text.strip():
+                    split_sents = [s.strip() for s in re.split(r"[\.\?\!\r\n।]+", rec_text) if s.strip()]
+                    sub_dur = round(chunk_dur / max(1, len(split_sents)), 2)
+                    sub_start = cur
+                    for s_item in split_sents:
+                        sentences.append({
+                            "start": round(sub_start, 2),
+                            "duration": round(max(2.5, sub_dur), 2),
+                            "text": s_item,
+                            "source_lang": sl if sl != "auto" else ("hi" if primary_lang == "hi-IN" else "en")
+                        })
+                        sub_start += sub_dur
 
-            if rec_text and rec_text.strip():
-                split_sents = [s.strip() for s in re.split(r"[\.\?\!\r\n।]+", rec_text) if s.strip()]
-                chunk_dur = round(len(chunk) / (16000 * 2), 2)
-                sub_dur = round(chunk_dur / max(1, len(split_sents)), 2)
-                sub_start = cur_sec
-                for s_item in split_sents:
-                    sentences.append({
-                        "start": round(sub_start, 2),
-                        "duration": round(max(2.5, sub_dur), 2),
-                        "text": s_item,
-                        "source_lang": sl if sl != "auto" else ("hi" if lang_code == "hi-IN" else "en")
-                    })
-                    sub_start += sub_dur
-
-            cur_sec += round(len(chunk) / (16000 * 2), 2)
+                cur += chunk_dur
 
         return sentences
     except Exception as e:
