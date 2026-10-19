@@ -252,7 +252,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     dropzone.addEventListener("drop", (e) => {
-        const files = e.dataTransfer.files;
+        e.preventDefault();
+        dropzone.classList.remove("dragover");
+        const files = (e.dataTransfer && e.dataTransfer.files) || (fileInput && fileInput.files);
         if (files && files.length > 0) {
             handleFileSelection(files[0]);
         }
@@ -265,10 +267,21 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     function handleFileSelection(file) {
+        if (!file) return;
         currentFile = file;
+        window._uploadedVideoFile = file;
         fileNameLabel.textContent = file.name;
         fileSizeLabel.textContent = formatBytes(file.size);
         selectedFileInfo.classList.remove("hidden");
+        selectedFileInfo.style.display = "flex";
+        dropzone.classList.add("file-selected");
+
+        const titleEl = dropzone.querySelector("h3");
+        if (titleEl) titleEl.textContent = "✓ " + file.name;
+        const subEl = dropzone.querySelector("p");
+        if (subEl) subEl.textContent = "File ready (" + formatBytes(file.size) + "). Choose target language below and click Start.";
+        const btnSpan = dropzone.querySelector(".btn-secondary");
+        if (btnSpan) btnSpan.textContent = "Click to Choose Different File";
     }
 
     function formatBytes(bytes) {
