@@ -1,9 +1,0 @@
-{
-  "name": "ai-video-translator",
-  "version": "1.0.0",
-  "description": "AI Video Translator with multi-language lip sync and gender voice diarization",
-  "private": true,
-  "scripts": {
-    "build": "node -e \"console.log('Static site build ready')\""
-  }
-}
