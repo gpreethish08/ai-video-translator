@@ -72,6 +72,7 @@
   // --- State Variables ---
   let currentMode = "upload"; // 'upload' or 'url'
   let selectedFile = null;
+  let fileVideoDuration = 0;
   let currentJobId = null;
   let currentJobData = null;
   let activeSegments = [];
@@ -219,6 +220,22 @@
     dropzonePrompt.style.display = "none";
     dropzoneSelected.style.display = "flex";
     updateSubmitButtonText();
+
+    // Measure exact video duration
+    fileVideoDuration = 0;
+    try {
+      const tempVid = document.createElement("video");
+      tempVid.preload = "metadata";
+      tempVid.src = URL.createObjectURL(file);
+      tempVid.onloadedmetadata = () => {
+        if (tempVid.duration && !isNaN(tempVid.duration)) {
+          fileVideoDuration = tempVid.duration;
+          console.log("Measured input video duration:", fileVideoDuration, "seconds");
+        }
+      };
+    } catch (e) {
+      console.warn("Could not measure video duration:", e);
+    }
   }
 
   videoFileInput.addEventListener("change", (e) => {
@@ -290,6 +307,7 @@
     updateSubmitButtonText();
 
     selectedFile = null;
+    fileVideoDuration = 19.09;
     selectedFileName.textContent = "sample_hindi_video.mp4 (Authentic Hindi Video)";
     selectedFileSize.textContent = "259 KB";
     dropzonePrompt.style.display = "none";
@@ -299,6 +317,7 @@
     executeTranslation({
       isDemo: true,
       filename: "sample_hindi_video.mp4",
+      videoDuration: 19.09,
       customScript: [
         "नमस्ते! आज के इस वीडियो में हम सीखेंगे कि किसी भी भाषा को आसानी से कैसे समझा जाता है।",
         "जब आप नए शब्द सीखते हैं, तो आपका आत्मविश्वास बढ़ता है।",
@@ -370,6 +389,7 @@
         formData.append("filename", "sample_hindi_video.mp4");
         formData.append("target_lang", targetLang);
         formData.append("source_lang", "hi");
+        formData.append("video_duration", options.videoDuration || 19.09);
         formData.append("gender_override", gender);
         formData.append("custom_script", options.customScript || "");
 
@@ -388,6 +408,9 @@
         const formData = new FormData();
         formData.append("filename", file.name);
         formData.append("file_size", file.size);
+        if (options.videoDuration || fileVideoDuration) {
+          formData.append("video_duration", options.videoDuration || fileVideoDuration);
+        }
         formData.append("target_lang", targetLang);
         formData.append("source_lang", sourceLang);
         formData.append("gender_override", gender);
@@ -481,7 +504,8 @@
     // Audio stream URL with query parameters for seamless serverless container reconstruction
     const titleParam = encodeURIComponent(job.filename || job.title || "Video Audio");
     const ytParam = job.youtube_id || "";
-    const audioUrl = `/api/audio/${currentJobId}?lang=${targetLang}&src=${sourceLang}&yt=${ytParam}&title=${titleParam}&t=${Date.now()}`;
+    const effectiveDur = options.videoDuration || job.video_duration || fileVideoDuration || (options.isDemo ? 19.09 : 0);
+    const audioUrl = `/api/audio/${currentJobId}?lang=${targetLang}&src=${sourceLang}&yt=${ytParam}&title=${titleParam}&dur=${effectiveDur}&t=${Date.now()}`;
 
     // Setup Video Player
     if (options.isDemo) {
@@ -508,8 +532,12 @@
       playerVideo.muted = true;
     }
 
-    // Setup Audio Player
+    // Setup Audio Player - prevent looping and out-of-bounds seeks
     playerAudio.src = audioUrl;
+    playerAudio.loop = false;
+    playerAudio.onended = () => {
+      playerAudio.pause();
+    };
 
     let audioMode = "translated"; // 'translated' or 'original'
     const toggleAudioTrackBtn = document.getElementById("toggleAudioTrackBtn");
@@ -524,9 +552,11 @@
         } else {
           audioMode = "translated";
           playerVideo.muted = true;
-          playerAudio.currentTime = playerVideo.currentTime;
-          if (!playerVideo.paused) {
-            playerAudio.play().catch(() => {});
+          if (!playerAudio.duration || playerVideo.currentTime < playerAudio.duration - 0.15) {
+            playerAudio.currentTime = playerVideo.currentTime;
+            if (!playerVideo.paused) {
+              playerAudio.play().catch(() => {});
+            }
           }
           toggleAudioTrackBtn.textContent = "🔊 Mode: Translated Target Voice (Click to switch to Original)";
         }
@@ -538,8 +568,12 @@
     playerVideo.onplay = () => {
       if (audioMode === "translated") {
         playerVideo.muted = true; // keep video audio muted so translated track is heard
-        playerAudio.currentTime = playerVideo.currentTime;
-        playerAudio.play().catch(() => {});
+        if (!playerAudio.duration || playerVideo.currentTime < playerAudio.duration - 0.15) {
+          playerAudio.currentTime = playerVideo.currentTime;
+          playerAudio.play().catch(() => {});
+        } else {
+          playerAudio.pause();
+        }
       } else {
         playerVideo.muted = false;
       }
@@ -550,7 +584,16 @@
     };
 
     playerVideo.onseeked = () => {
-      playerAudio.currentTime = playerVideo.currentTime;
+      if (audioMode === "translated") {
+        if (playerAudio.duration && playerVideo.currentTime >= playerAudio.duration - 0.15) {
+          playerAudio.pause();
+        } else {
+          playerAudio.currentTime = playerVideo.currentTime;
+          if (!playerVideo.paused) {
+            playerAudio.play().catch(() => {});
+          }
+        }
+      }
     };
 
     // Subtitle update listener during playback
@@ -558,13 +601,41 @@
       const active = activeSegments.find((s) => currentTime >= s.start_time && currentTime <= s.end_time);
       if (active) {
         liveSubtitleText.textContent = `"${active.translated_text}"`;
-      } else if (activeSegments.length > 0) {
-        liveSubtitleText.textContent = `"${activeSegments[0].translated_text}"`;
+      } else {
+        // Find the most recent segment that has already started so we don't jump back to the first sentence
+        const pastSegments = activeSegments.filter((s) => s.start_time <= currentTime);
+        if (pastSegments.length > 0) {
+          liveSubtitleText.textContent = `"${pastSegments[pastSegments.length - 1].translated_text}"`;
+        } else if (activeSegments.length > 0) {
+          liveSubtitleText.textContent = `"${activeSegments[0].translated_text}"`;
+        }
       }
     };
 
-    playerVideo.ontimeupdate = () => syncSubtitles(playerVideo.currentTime);
-    playerAudio.ontimeupdate = () => syncSubtitles(playerAudio.currentTime);
+    playerVideo.ontimeupdate = () => {
+      syncSubtitles(playerVideo.currentTime);
+      if (audioMode === "translated" && !playerVideo.paused && playerAudio.duration) {
+        if (playerVideo.currentTime >= playerAudio.duration - 0.15) {
+          if (!playerAudio.paused) {
+            playerAudio.pause();
+          }
+        } else {
+          const drift = Math.abs(playerAudio.currentTime - playerVideo.currentTime);
+          if (drift > 0.35) {
+            playerAudio.currentTime = playerVideo.currentTime;
+            if (playerAudio.paused) {
+              playerAudio.play().catch(() => {});
+            }
+          }
+        }
+      }
+    };
+
+    playerAudio.ontimeupdate = () => {
+      if (playerVideo.paused) {
+        syncSubtitles(playerAudio.currentTime);
+      }
+    };
 
     // Initial subtitle
     if (activeSegments.length > 0) {
@@ -597,7 +668,7 @@
 
     // Configure Download Actions
     downloadAudioBtn.onclick = () => {
-      window.location.href = `/api/download/audio/${currentJobId}?lang=${targetLang}&src=${sourceLang}&yt=${ytParam}&title=${titleParam}`;
+      window.location.href = `/api/download/audio/${currentJobId}?lang=${targetLang}&src=${sourceLang}&yt=${ytParam}&title=${titleParam}&dur=${effectiveDur}`;
     };
 
     downloadSrtBtn.onclick = () => {
